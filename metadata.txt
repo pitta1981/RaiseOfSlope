@@ -1,0 +1,15 @@
+[general]
+name=TheRaiseOfSlopes
+qgisMinimumVersion=3.28
+qgisMaximumVersion=3.99
+description=Analisi profilo DEM e stabilità versanti con metodi LE (Bishop, Morgenstern-Price, Spencer)
+version=0.1.0
+author=Autore
+email=you@example.com
+about=Plugin QGIS per calcolo profilo da DEM, analisi di stabilità dei versanti (grid/simplex), gestione stratigrafia/falda ed export risultati.
+category=Analysis
+icon=icon.svg
+experimental=True
+deprecated=False
+tags=profile,slope,stability,landslide,section,geotecnica
+homepage=
