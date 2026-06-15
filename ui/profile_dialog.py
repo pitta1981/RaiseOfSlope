@@ -5,7 +5,8 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QLabel, QComboBox, QFileDialog, QTabWidget,
                                  QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
                                  QGroupBox, QTextEdit, QListWidget, QListWidgetItem,
-                                 QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction)
+                                 QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction,
+                                 QSizePolicy)
 from qgis.PyQt.QtSvg import QSvgGenerator
 from qgis.core import QgsProject
 
@@ -356,7 +357,24 @@ class ProfileDialog(QDialog):
         
         # Quinta scheda: Analisi di stabilità con Simplex
         self._create_simplex_stability_tab()
-        
+
+        # Widget calcolo FOS sempre visibile (sotto le tab)
+        fos_group = QGroupBox("Factor of Safety Calculation")
+        fos_layout = QHBoxLayout(fos_group)
+        self.btnRunAnalysis = QToolButton()
+        self.btnRunAnalysis.setText("Run Simplex Analysis")
+        self.btnRunAnalysis.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.btnRunAnalysis.setPopupMode(QToolButton.MenuButtonPopup)
+        self.btnRunAnalysis.clicked.connect(self._emit_simplex_stability_analysis)
+        run_menu = QMenu(self)
+        act_grid = QAction("Run Grid Analysis", self)
+        act_grid.triggered.connect(self._emit_grid_stability_analysis)
+        run_menu.addAction(act_grid)
+        self.btnRunAnalysis.setMenu(run_menu)
+        self.btnRunAnalysis.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        fos_layout.addWidget(self.btnRunAnalysis)
+        layout.addWidget(fos_group)
+
         # Status bar comune
         self.lblStatus = QLabel("")
         layout.addWidget(self.lblStatus)
@@ -827,12 +845,7 @@ class ProfileDialog(QDialog):
         grid_layout.addRow("Surfaces to display:", self.grid_num_surfaces_spinbox)
 
         layout.addWidget(grid_group)
-        
-        # Pulsante calcolo
-        self.btnGridStabilityAnalysis = QPushButton("Run Grid Analysis")
-        self.btnGridStabilityAnalysis.clicked.connect(self._emit_grid_stability_analysis)
-        layout.addWidget(self.btnGridStabilityAnalysis)
-        
+
         # Area risultati
         results_group = QGroupBox("Results")
         results_layout = QVBoxLayout(results_group)
@@ -923,12 +936,7 @@ class ProfileDialog(QDialog):
         optimization_layout.addRow("Surfaces to display:", self.simplex_num_surfaces_spinbox)
 
         layout.addWidget(optimization_group)
-        
-        # Pulsante calcolo
-        self.btnSimplexStabilityAnalysis = QPushButton("Run Simplex Analysis")
-        self.btnSimplexStabilityAnalysis.clicked.connect(self._emit_simplex_stability_analysis)
-        layout.addWidget(self.btnSimplexStabilityAnalysis)
-        
+
         # Area risultati
         results_group = QGroupBox("Results")
         results_layout = QVBoxLayout(results_group)
