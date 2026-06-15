@@ -25,11 +25,13 @@ import sys
 import zipfile
 
 PLUGIN_NAME = "TheRaiseOfSlopes"
+SOURCE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 EXCLUDED_DIR_PREFIXES = {
     ".git",
-    "__pycache__"
+    "__pycache__",
+    "qgis_plugin",
 }
 
 EXCLUDED_FILE_NAMES = {
@@ -102,7 +104,7 @@ def default_qgis_plugin_dir() -> str:
 
 
 def copy_plugin(dest_dir: str) -> None:
-    src = os.path.abspath(os.getcwd())
+    src = SOURCE_ROOT
     dest = os.path.join(dest_dir, PLUGIN_NAME)
 
     print(f"Copying plugin from {src} to {dest}")
@@ -125,10 +127,11 @@ def copy_plugin(dest_dir: str) -> None:
         ),
     )
     print("Plugin installed successfully.")
+    print("Riavvia QGIS per ricaricare il plugin.")
 
 
 def zip_plugin(dest_filename: str) -> None:
-    src = os.path.abspath(os.getcwd())
+    src = SOURCE_ROOT
     print(f"Creating zip archive {dest_filename}")
 
     with zipfile.ZipFile(dest_filename, "w", zipfile.ZIP_DEFLATED) as zf:

@@ -26,7 +26,7 @@ from qgis.core import (
 from qgis.gui import QgsRubberBand
 
 
-from .ui.profile_dialog import ProfileDialog
+from .ui.profile_dialog import ProfileDialog, fos_to_hex
 from .tools.point_selection_tool import TwoPointSelectionTool
 
 # Import updated framework from external/gwf-le/src (no fallback to local copies)
@@ -40,7 +40,7 @@ for p in (gwf_root, gwf_src, gwf_lem, gwf_search):
         sys.path.insert(0, p)
 
 try:
-    from lemInterface import Soil, lemOptions, uniform_subdivision
+    from lemInterface import Soil, lemOptions, lemResult, uniform_subdivision
     from gleMethods import bishop, morgerstern_price, spencer
     from circularSlipSurfaces import circularSlipSearchDomain
     from searchInterface import lemMethod, find_critical, simplex
@@ -117,7 +117,15 @@ class TheRaiseOfSlopesPlugin:
         self.dlg.raise_()
 
     def _icon_path(self):
-        return os.path.join(os.path.dirname(__file__), 'icon.png')
+        plugin_dir = os.path.dirname(__file__)
+        svg_icon = os.path.join(plugin_dir, 'icon.svg')
+        png_icon = os.path.join(plugin_dir, 'icon.png')
+
+        if os.path.isfile(svg_icon) and os.path.getsize(svg_icon) > 0:
+            return svg_icon
+        if os.path.isfile(png_icon) and os.path.getsize(png_icon) > 0:
+            return png_icon
+        return svg_icon if os.path.exists(svg_icon) else png_icon
 
     def _start_point_selection(self):
         """Activate the map tool to collect two user clicks."""
@@ -455,7 +463,7 @@ class TheRaiseOfSlopesPlugin:
 
                         color_hex = None
                         try:
-                            color_hex = self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
+                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
                         except Exception:
                             color_hex = None
                         r, g, b = _hex_to_rgb(color_hex)
@@ -530,7 +538,7 @@ class TheRaiseOfSlopesPlugin:
                     for idx, s in enumerate(self.slip_surfaces, start=1):
                         color_hex = None
                         try:
-                            color_hex = self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
+                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
                         except Exception:
                             color_hex = None
                         r, g, b = _hex_to_rgb(color_hex)
@@ -560,7 +568,7 @@ class TheRaiseOfSlopesPlugin:
 
                         color_hex = None
                         try:
-                            color_hex = self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
+                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
                         except Exception:
                             color_hex = None
                         r, g, b = _hex_to_rgb(color_hex)
@@ -689,7 +697,9 @@ class TheRaiseOfSlopesPlugin:
                 'x_out_max': float(self.dlg.x_out_max_spinbox.value()),
                 'eta_min': float(self.dlg.eta_min_spinbox.value()),
                 'eta_max': float(self.dlg.eta_max_spinbox.value()),
-                'max_iterations': int(self.dlg.max_iterations_spinbox.value())
+                'max_iterations': int(self.dlg.max_iterations_spinbox.value()),
+                'grid_num_surfaces': int(self.dlg.grid_num_surfaces_spinbox.value()),
+                'simplex_num_surfaces': int(self.dlg.simplex_num_surfaces_spinbox.value()),
             })
         except Exception:
             pass
@@ -925,6 +935,8 @@ class TheRaiseOfSlopesPlugin:
                 self.dlg.friction_angle_spinbox.setValue(params.get('friction_angle', self.dlg.friction_angle_spinbox.value()))
                 self.dlg.slices_spinbox.setValue(params.get('num_slices', self.dlg.slices_spinbox.value()))
                 self.dlg.depth_factor_spinbox.setValue(params.get('depth_factor', self.dlg.depth_factor_spinbox.value()))
+                self.dlg.grid_num_surfaces_spinbox.setValue(params.get('grid_num_surfaces', self.dlg.grid_num_surfaces_spinbox.value()))
+                self.dlg.simplex_num_surfaces_spinbox.setValue(params.get('simplex_num_surfaces', self.dlg.simplex_num_surfaces_spinbox.value()))
             except Exception:
                 pass
 
@@ -1278,9 +1290,11 @@ class TheRaiseOfSlopesPlugin:
                 grid_overlap_warning = (
                     "⚠️ ATTENZIONE: i range In e Out si sovrappongono "
                     f"(in_min={in_range[0]:.1f} < out_max={out_range[1]:.1f}).\n"
-                    "Le superfici con x_in ≤ x_out verranno scartate automaticamente.\n"
-                    "Per risultati migliori imposta In nella parte alta del pendio "
-                    "(es. 60–100%) e Out nella parte bassa (es. 0–40%).\n\n"
+                    "Le superfici degeneri (ingresso ≈ uscita o superficie sopra il "
+                    "terreno) verranno scartate automaticamente; entrambe le direzioni "
+                    "di pendio sono gestite.\n"
+                    "Per ridurre il numero di superfici degeneri limita la "
+                    "sovrapposizione tra gli intervalli In e Out.\n\n"
                 )
                 print(grid_overlap_warning)
             else:
@@ -1289,6 +1303,20 @@ class TheRaiseOfSlopesPlugin:
             print(f"Search ranges: in={in_range}, out={out_range}")
             print(f"Grid: in=[{in_interval_min:.1f}, {in_interval_max:.1f}], out=[{out_interval_min:.1f}, {out_interval_max:.1f}]")
             print(f"Grid points: in={params['num_in_pts']}, out={params['num_out_pts']}, min_eta={params['min_eta_inc']}°")
+
+            # Normalise the slope orientation to the solver's canonical frame.
+            # The LEM/GLE math is only consistent for slopes descending toward
+            # lower x; if this slope descends toward higher x we mirror every
+            # spatial function and the search ranges, then map results back.
+            flipped, M = self._needs_orientation_flip(ground_surface, x_min, x_max)
+            back_x = (lambda v: M - np.asarray(v)) if flipped else (lambda v: v)
+            if flipped:
+                print("Slope descends toward higher x: mirroring to canonical frame.")
+                ground_surface = self._mirror_function(ground_surface, M)
+                layer2_interface = self._mirror_function(layer2_interface, M)
+                water_table = self._mirror_function(water_table, M)
+                in_range = (M - in_range[1], M - in_range[0])
+                out_range = (M - out_range[1], M - out_range[0])
 
             # Stability method selector
             method_label, solver = self._get_solver(params.get('stability_method', 'Bishop'))
@@ -1303,13 +1331,17 @@ class TheRaiseOfSlopesPlugin:
                 tolerance=1e-4,
                 subdivision_method=lambda interval: uniform_subdivision(interval, int(params['num_slices']))
             )
-            method = lemMethod(solver, soil, method_options)
+            # Reject degenerate / non-physical surfaces regardless of slope direction.
+            min_length, min_depth = self._geometry_limits(x_min, x_max)
+            guarded_solver = self._make_guarded_solver(solver, ground_surface, min_length, min_depth)
+            method = lemMethod(guarded_solver, soil, method_options)
 
             domain = circularSlipSearchDomain(
                 ground_surface=ground_surface,
                 in_range=in_range,
                 out_range=out_range,
                 eta_min_shift=np.radians(1.0),
+                min_surf_length=min_length,
             )
 
             grid_options = {
@@ -1317,28 +1349,27 @@ class TheRaiseOfSlopesPlugin:
                 'num_out_points': int(params['num_out_pts']),
                 'min_eta_inc': np.radians(float(params['min_eta_inc'])),
             }
-            
+
             # Run calculation
             self.dlg.setStatus("Calculation in progress... (grid of circles)")
 
             print("Calling searchInterface.find_critical...")
             geometries = domain.sample_grid(grid_options)
-            # Filter geometries where in_pt.x <= out_pt.x: these produce backward slip surfaces
-            # (the mass would slide uphill), yielding very large negative FoS values.
-            # Convention: in_pt (crown/entry) must be upslope, i.e. at higher x than out_pt (toe).
+            # Keep only physically meaningful surfaces. This is orientation-independent:
+            # it works whether the slope descends toward lower or higher x, and removes
+            # the degenerate surfaces produced when the In/Out ranges overlap.
             n_before = len(geometries)
             geometries = [g for g in geometries
-                          if hasattr(g, 'in_pt') and hasattr(g, 'out_pt')
-                          and float(g.in_pt[0]) > float(g.out_pt[0])]
+                          if self._is_physical_surface(g, ground_surface, min_length, min_depth)]
             n_filtered = n_before - len(geometries)
             if n_filtered > 0:
-                print(f"  Filtered {n_filtered} reversed geometries (x_in <= x_out); {len(geometries)} remain.")
+                print(f"  Discarded {n_filtered} degenerate geometries; {len(geometries)} remain.")
             if not geometries:
                 raise ValueError(
                     "Nessuna geometria valida dopo il filtraggio.\n"
-                    "Assicurati che l'intervallo 'In' (corona) sia nella parte alta del pendio "
-                    "(frazione > intervallo 'Out' che è il piede).\n"
-                    "Esempio: In=[0.5, 1.0], Out=[0.0, 0.5]"
+                    "Le superfici generate sono degeneri (ingresso e uscita troppo vicini "
+                    "o superficie sopra il terreno). Riduci la sovrapposizione tra gli "
+                    "intervalli In e Out, oppure allarga il dominio di ricerca."
                 )
             results, computation_time = find_critical(method, geometries, num_geometries=len(geometries))
 
@@ -1346,6 +1377,15 @@ class TheRaiseOfSlopesPlugin:
 
             if results is None or len(results) == 0:
                 raise ValueError("Nessuna superficie di scivolamento valida trovata")
+
+            # Drop surfaces the guard flagged as non-physical (FoS pushed to +inf).
+            results = [r for r in results if np.isfinite(r[1].factor_of_safety)]
+            if not results:
+                raise ValueError(
+                    "Nessuna superficie con fattore di sicurezza fisicamente valido.\n"
+                    "Tutte le superfici candidate erano degeneri o producevano un FoS non fisico.\n"
+                    "Verifica gli intervalli di ricerca In/Out e i parametri del terreno."
+                )
 
             all_results = results
             print(f"Superfici analizzate: {len(all_results)}")
@@ -1357,37 +1397,47 @@ class TheRaiseOfSlopesPlugin:
             print(f"\nRISULTATO CRITICO:")
             print(f"Fattore di Sicurezza (FS): {factor_of_safety:.4f}")
 
-            # Geometria superficie critica
-            x_out = float(critical_geometry.landslide_interval[0])
-            x_in = float(critical_geometry.landslide_interval[1])
-            
-            y_in = ground_surface(x_in)
-            y_out = ground_surface(x_out)
-            
+            # Geometria superficie critica (computed in the canonical frame,
+            # then mapped back to the real profile coordinates for display).
+            u_out = float(critical_geometry.landslide_interval[0])
+            u_in = float(critical_geometry.landslide_interval[1])
+
+            # Elevation is invariant under the mirror, so evaluate it in the
+            # canonical frame before mapping the abscissae back.
+            y_in = float(np.asarray(ground_surface(u_in)))
+            y_out = float(np.asarray(ground_surface(u_out)))
+            surface_length = abs(u_in - u_out)
+            x_in = float(back_x(u_in))
+            x_out = float(back_x(u_out))
+
             eta_deg = float(np.degrees(critical_geometry.eta)) if hasattr(critical_geometry, 'eta') else "N/A"
-            
+
             print(f"\nGEOMETRIA SUPERFICIE CRITICA:")
             print(f"Punto ingresso (x_in): {x_in:.2f} m, quota: {y_in:.2f} m")
             print(f"Punto uscita (x_out): {x_out:.2f} m, quota: {y_out:.2f} m")
-            print(f"Lunghezza superficie: {x_in - x_out:.2f} m")
+            print(f"Lunghezza superficie: {surface_length:.2f} m")
             if isinstance(eta_deg, (int, float)):
                 print(f"Angolo eta: {eta_deg:.2f}°")
             else:
                 print(f"Angolo eta: {eta_deg}")
-            
-            # Sample the surface for the graph
-            try:
-                x_start, x_end = critical_geometry.landslide_interval
-                slip_x = np.linspace(x_start, x_end, 200)
-                slip_y = critical_geometry.slip_surface(slip_x)
 
-                # Save the critical surface with metadata
-                self._store_surface('grid', method_label, slip_x, slip_y, factor_of_safety)
+            # Store the requested number of surfaces (ordered by FoS; #1 is critical).
+            # all_results is sorted by ascending factor_of_safety.
+            n_show = max(1, min(int(params.get('num_surfaces', 1)), len(all_results)))
+            stored = 0
+            for geom, res in all_results[:n_show]:
+                try:
+                    x_start, x_end = geom.landslide_interval
+                    slip_x = np.linspace(x_start, x_end, 200)
+                    slip_y = geom.slip_surface(slip_x)
+                    slip_x = back_x(slip_x)  # map back to real profile coordinates
+                    self._store_surface('grid', method_label, slip_x, slip_y, res.factor_of_safety)
+                    stored += 1
+                except Exception as e:
+                    print(f"⚠️ Unable to sample a slip surface for the graph (Grid): {e}")
+                    continue
+            print(f"Surfaces displayed: {stored} (requested {n_show})")
 
-            except Exception as e:
-                print(f"⚠️ Unable to sample the critical slip surface for the graph (Grid): {e}")
-                pass
-            
             # Update the graph with all available surfaces
             self._update_profile_with_all_surfaces()
             
@@ -1418,7 +1468,7 @@ GRID PARAMETERS:
 CRITICAL SLIP SURFACE:
 - Entry point (upstream): x = {x_in:.2f} m, z = {y_in:.2f} m
 - Exit point (downstream): x = {x_out:.2f} m, z = {y_out:.2f} m
-- Surface length: {x_in - x_out:.2f} m
+- Surface length: {surface_length:.2f} m
 - Eta angle: {eta_str}
 
 RESULTS:
@@ -1543,9 +1593,11 @@ Total surfaces analyzed: {len(all_results)}
                 overlap_warning = (
                     "⚠️ ATTENZIONE: i range x_in e x_out si sovrappongono "
                     f"(x_in_min={x_in_min:.1f} < x_out_max={x_out_max:.1f}).\n"
-                    "Le superfici con x_in ≤ x_out verranno scartate automaticamente.\n"
-                    "Per risultati migliori imposta x_in nella parte alta del pendio "
-                    "(es. 50–100%) e x_out nella parte bassa (es. 0–50%).\n\n"
+                    "Le superfici degeneri (ingresso ≈ uscita o superficie sopra il "
+                    "terreno) verranno scartate automaticamente; entrambe le direzioni "
+                    "di pendio sono gestite.\n"
+                    "Per ridurre il numero di superfici degeneri limita la "
+                    "sovrapposizione tra gli intervalli x_in e x_out.\n\n"
                 )
                 print(overlap_warning)
             else:
@@ -1569,10 +1621,24 @@ Total surfaces analyzed: {len(all_results)}
             print(f"  min_eta_inc: 10.0° (increment for initial grid)")
             print(f"  Total combinations: {simplex_grid_pts * simplex_grid_pts} pairs (in,out)")
 
+            # Normalise the slope orientation to the solver's canonical frame
+            # (descending toward lower x). Mirror the spatial functions and the
+            # search ranges when the slope descends toward higher x, then map
+            # the optimised surface back for display.
+            flipped, M = self._needs_orientation_flip(ground_surface, x_min, x_max)
+            back_x = (lambda v: M - np.asarray(v)) if flipped else (lambda v: v)
+            if flipped:
+                print("Slope descends toward higher x: mirroring to canonical frame.")
+                ground_surface = self._mirror_function(ground_surface, M)
+                layer2_interface = self._mirror_function(layer2_interface, M)
+                water_table = self._mirror_function(water_table, M)
+                in_range = (M - in_range[1], M - in_range[0])
+                out_range = (M - out_range[1], M - out_range[0])
+
             # Stability method selector
             method_label, solver = self._get_solver(params.get('stability_method', 'Bishop'))
             print(f"Stability calculation method: {method_label}")
-            
+
             # Soil and method setup
             soil = self._create_soil_properties_and_state(
                 params, ground_surface, layer2_interface, water_table
@@ -1582,36 +1648,45 @@ Total surfaces analyzed: {len(all_results)}
                 tolerance=1e-4,
                 subdivision_method=lambda interval: uniform_subdivision(interval, int(params['num_slices']))
             )
-            method = lemMethod(solver, soil, method_options)
+            # Reject degenerate / non-physical surfaces regardless of slope direction.
+            min_length, min_depth = self._geometry_limits(x_min, x_max)
+            guarded_solver = self._make_guarded_solver(solver, ground_surface, min_length, min_depth)
+            method = lemMethod(guarded_solver, soil, method_options)
 
             domain = circularSlipSearchDomain(
                 ground_surface=ground_surface,
                 in_range=in_range,
                 out_range=out_range,
                 eta_min_shift=np.radians(1.0),
+                min_surf_length=min_length,
             )
-            
+
             # Run calculation
             self.dlg.setStatus("Calculation in progress... (simplex optimization)")
-            
+
             print("Calling searchInterface.simplex...")
             initial_geometries = domain.sample_grid(grid_options)
-            # Filter reversed geometries (x_in <= x_out produce backward surfaces with negative FoS)
+            # Keep only physically meaningful surfaces as simplex seeds. Orientation-
+            # independent: works for slopes descending toward either side and removes
+            # the degenerate seeds produced when the In/Out ranges overlap.
             n_before = len(initial_geometries)
             initial_geometries = [g for g in initial_geometries
-                                   if hasattr(g, 'in_pt') and hasattr(g, 'out_pt')
-                                   and float(g.in_pt[0]) > float(g.out_pt[0])]
+                                   if self._is_physical_surface(g, ground_surface, min_length, min_depth)]
             n_filtered = n_before - len(initial_geometries)
             if n_filtered > 0:
-                print(f"  Filtered {n_filtered} reversed geometries (x_in <= x_out); {len(initial_geometries)} remain.")
+                print(f"  Discarded {n_filtered} degenerate geometries; {len(initial_geometries)} remain.")
             if not initial_geometries:
                 raise ValueError(
                     "Nessuna geometria iniziale valida dopo il filtraggio.\n"
-                    "Assicurati che il range x_in (corona, alta frazione) "
-                    "sia nella parte alta del pendio rispetto a x_out (piede, bassa frazione).\n"
-                    "Esempio: x_in=[0.5, 1.0], x_out=[0.0, 0.5]"
+                    "Le superfici generate sono degeneri (ingresso e uscita troppo vicini "
+                    "o superficie sopra il terreno). Riduci la sovrapposizione tra gli "
+                    "intervalli x_in e x_out, oppure allarga il dominio di ricerca."
                 )
-            grid_result, grid_time = find_critical(method, initial_geometries, num_geometries=3)
+            # Number of surfaces requested for display; seed at least that many
+            # starting geometries so the optimiser can return distinct surfaces.
+            n_show = max(1, int(params.get('num_surfaces', 1)))
+            n_seeds = min(max(3, n_show), len(initial_geometries))
+            grid_result, grid_time = find_critical(method, initial_geometries, num_geometries=n_seeds)
             simplex_start_geo = [g[0] for g in grid_result]
             simplex_options = {
                 'disp': False,
@@ -1624,7 +1699,7 @@ Total surfaces analyzed: {len(all_results)}
                 domain=domain,
                 method=method,
                 initialGeometries=simplex_start_geo,
-                num_geometries=1,
+                num_geometries=n_show,
                 options=simplex_options,
             )
             computation_time = grid_time + simplex_time
@@ -1636,36 +1711,59 @@ Total surfaces analyzed: {len(all_results)}
 
             best_geometry, best_result = optimized[0]
             factor_of_safety = float(best_result.factor_of_safety)
+            if not np.isfinite(factor_of_safety):
+                raise ValueError(
+                    "L'ottimizzazione non ha trovato una superficie fisicamente valida.\n"
+                    "Le superfici candidate erano degeneri o producevano un FoS non fisico.\n"
+                    "Verifica gli intervalli x_in/x_out e i parametri del terreno."
+                )
             
             print(f"\nRISULTATO CRITICO:")
             print(f"Fattore di Sicurezza (FS): {factor_of_safety:.4f}")
             print(f"   Numero chiamate metodo: {calls + len(initial_geometries)}")
 
-            # Informazioni superficie critica
+            # Informazioni superficie critica (mapped back from the canonical frame)
             if hasattr(best_geometry, 'in_pt') and hasattr(best_geometry, 'out_pt'):
-                x_in = float(best_geometry.in_pt[0])
-                x_out = float(best_geometry.out_pt[0])
+                u_in = float(best_geometry.in_pt[0])
+                u_out = float(best_geometry.out_pt[0])
+                surface_length = abs(u_in - u_out)
+                x_in = float(back_x(u_in))
+                x_out = float(back_x(u_out))
                 eta_deg = float(np.degrees(best_geometry.eta)) if hasattr(best_geometry, 'eta') else "N/A"
-                
+
                 print(f"\nGEOMETRIA SUPERFICIE CRITICA:")
                 print(f"Punto ingresso (x_in): {x_in:.2f} m")
-                print(f"Punto uscita (x_out): {x_out:.2f} m") 
-                print(f"Lunghezza superficie: {x_in - x_out:.2f} m")
+                print(f"Punto uscita (x_out): {x_out:.2f} m")
+                print(f"Lunghezza superficie: {surface_length:.2f} m")
                 if isinstance(eta_deg, (int, float)):
                     print(f"Angolo eta: {eta_deg:.2f}°")
                 else:
                     print(f"Angolo eta: {eta_deg}")
-                
-                try:
-                    x_start, x_end = best_geometry.landslide_interval
-                    slip_x = np.linspace(x_start, x_end, 200)
-                    slip_y = best_geometry.slip_surface(slip_x)
 
-                    self._store_surface('simplex', method_label, slip_x, slip_y, factor_of_safety)
-                    self._update_profile_with_all_surfaces()
-                except Exception as e:
-                    print(f"⚠️ Errore nel campionamento della superficie circolare: {e}")
-                    self._update_profile_with_all_surfaces()
+                # Store the requested number of optimised surfaces (ordered by FoS,
+                # deduplicated since several seeds may converge to the same minimum).
+                seen = set()
+                stored = 0
+                for g_geo, g_res in optimized[:n_show]:
+                    try:
+                        fos_i = float(g_res.factor_of_safety)
+                        if not np.isfinite(fos_i):
+                            continue
+                        x_start, x_end = g_geo.landslide_interval
+                        key = (round(float(x_start), 2), round(float(x_end), 2), round(fos_i, 4))
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        slip_x = np.linspace(x_start, x_end, 200)
+                        slip_y = g_geo.slip_surface(slip_x)
+                        slip_x = back_x(slip_x)  # map back to real profile coordinates
+                        self._store_surface('simplex', method_label, slip_x, slip_y, fos_i)
+                        stored += 1
+                    except Exception as e:
+                        print(f"⚠️ Errore nel campionamento di una superficie (Simplex): {e}")
+                        continue
+                print(f"Surfaces displayed: {stored} (requested {n_show})")
+                self._update_profile_with_all_surfaces()
             else:
                 print("⚠️ Parametri geometrici non disponibili")
                 x_in = x_out = eta_deg = "N/A"
@@ -1677,7 +1775,7 @@ Total surfaces analyzed: {len(all_results)}
             if isinstance(x_in, (int, float)) and isinstance(x_out, (int, float)):
                 x_in_str = f"{x_in:.2f}"
                 x_out_str = f"{x_out:.2f}"
-                length_str = f"{x_in - x_out:.2f}"
+                length_str = f"{surface_length:.2f}"
             else:
                 x_in_str = str(x_in)
                 x_out_str = str(x_out)
@@ -2092,22 +2190,198 @@ Optimization:
         return '\n'.join(info) if info else ""
 
     def _update_profile_with_all_surfaces(self):
-        """Update profile graph with all calculated critical surfaces."""
+        """Update profile graph with all calculated critical surfaces.
+
+        Surfaces are coloured on a shared Factor-of-Safety scale (red = critical,
+        green = safer) and the critical one (lowest FoS) is emphasised. The plan
+        view overlays are redrawn so their colours match the graph.
+        """
         if not self.profile_distances or not self.profile_elevations:
             return
-        
+
+        self._recompute_surface_styles()
+        self._redraw_plan_overlays()
+
         surfaces_list = []
-        for idx, s in enumerate(self.slip_surfaces):
-            search_type = s.get('search')
-            method_label = s.get('method')
-            color = s.get('color') or self._get_color_for_surface(idx, search_type, method_label)
-            label = s.get('label') or self._format_surface_label(search_type, method_label, s.get('fs'), color)
-            surfaces_list.append({'x': s.get('x', []), 'y': s.get('y', []), 'color': color, 'label': label})
+        for s in self.slip_surfaces:
+            surfaces_list.append({
+                'x': s.get('x', []),
+                'y': s.get('y', []),
+                'color': s.get('color'),
+                'label': s.get('label'),
+                'width': s.get('width', 2.0),
+                'fs': s.get('fs'),
+            })
 
         if surfaces_list:
             self.dlg.updateProfile(self.profile_distances, self.profile_elevations, slip_surfaces_list=surfaces_list)
         else:
             self.dlg.updateProfile(self.profile_distances, self.profile_elevations)
+
+    def _recompute_surface_styles(self):
+        """Assign colour / width / label to every stored surface from the FoS scale.
+
+        Colours span all stored surfaces: the lowest FoS maps to red (critical),
+        the highest to green (safer). The critical surface is drawn thicker and is
+        the only one ranked #1. Returns (fs_min, fs_max, n_finite).
+        """
+        surfaces = self.slip_surfaces
+        fs_list = []
+        for s in surfaces:
+            try:
+                fv = float(s.get('fs'))
+                if np.isfinite(fv):
+                    fs_list.append(fv)
+            except Exception:
+                continue
+
+        fs_min = min(fs_list) if fs_list else 0.0
+        fs_max = max(fs_list) if fs_list else 0.0
+
+        # Rank by ascending FoS (1 = critical). Non-finite FoS sink to the bottom.
+        def _fs_key(i):
+            v = surfaces[i].get('fs')
+            try:
+                v = float(v)
+                return v if np.isfinite(v) else np.inf
+            except Exception:
+                return np.inf
+
+        order = sorted(range(len(surfaces)), key=_fs_key)
+        rank_of = {i: r for r, i in enumerate(order, start=1)}
+
+        for i, s in enumerate(surfaces):
+            fs = s.get('fs')
+            color = self._color_for_fos(fs, fs_min, fs_max)
+            rank = rank_of.get(i, i + 1)
+            s['color'] = color
+            s['rank'] = rank
+            s['width'] = 3.5 if rank == 1 else 1.8
+            s['label'] = self._format_surface_label(s.get('search'), s.get('method'), fs, color, rank)
+
+        return fs_min, fs_max, len(fs_list)
+
+    def _redraw_plan_overlays(self):
+        """Clear and redraw the plan-view surface overlays using current colours."""
+        self._clear_plan_overlays()
+        for s in self.slip_surfaces:
+            x = s.get('x')
+            try:
+                if x is None or len(x) < 2:
+                    continue
+                x_start = float(x[0])
+                x_end = float(x[-1])
+                x_out = min(x_start, x_end)
+                x_in = max(x_start, x_end)
+                self._draw_plan_surface(x_in, x_out, float(s.get('fs')), s.get('color', '#d62728'))
+            except Exception:
+                continue
+
+    def _needs_orientation_flip(self, ground_surface, x_min, x_max):
+        """Whether the profile must be mirrored to the solver's canonical frame.
+
+        The limit-equilibrium / GLE formulation is only fully consistent for
+        slopes that descend toward lower x (ground elevation increasing with x).
+        When the slope descends toward higher x we mirror the x axis with the
+        involution u = (x_min + x_max) - x so the solver always sees the
+        canonical orientation; results are mapped back through the same
+        involution for display.
+
+        Returns (flipped, M) where M = x_min + x_max is the mirror constant.
+        """
+        M = float(x_min) + float(x_max)
+        y_lo = float(np.asarray(ground_surface(x_min)))
+        y_hi = float(np.asarray(ground_surface(x_max)))
+        flipped = y_lo > y_hi  # descends toward higher x -> needs mirroring
+        return flipped, M
+
+    def _mirror_function(self, fn, M):
+        """Return fn evaluated in the mirrored frame: x -> fn(M - x)."""
+        if fn is None:
+            return None
+        return lambda x, _f=fn, _M=M: _f(_M - np.asarray(x, dtype=float))
+
+    def _geometry_limits(self, x_min, x_max):
+        """Minimum surface length / thickness used to reject degenerate arcs.
+
+        Scaled on the profile width so the thresholds adapt to the slope size.
+        These act as an orientation-independent guard against the degenerate
+        surfaces produced when the In and Out search ranges overlap.
+        """
+        span = abs(float(x_max) - float(x_min))
+        min_length = max(1.0, 0.02 * span)
+        min_depth = max(0.1, 0.002 * span)
+        return min_length, min_depth
+
+    def _is_physical_surface(self, geometry, ground_surface, min_length, min_depth):
+        """Orientation-independent check that a circular slip surface is meaningful.
+
+        Works for slopes descending in either direction: it never assumes which
+        of the entry/exit points is upslope. A surface is rejected when it is
+        degenerate (entry ~ exit), has an infinite/invalid arc, rises above the
+        ground anywhere, or is too thin to represent a real sliding mass.
+        """
+        try:
+            in_x = float(geometry.in_pt[0])
+            out_x = float(geometry.out_pt[0])
+        except Exception:
+            return False
+
+        if not (np.isfinite(in_x) and np.isfinite(out_x)):
+            return False
+        # Degenerate / too-short surface (dominant case when ranges overlap).
+        if abs(in_x - out_x) < min_length:
+            return False
+
+        # A straight chord (alpha <= 0) yields an infinite radius / center.
+        radius = float(np.asarray(geometry.radius))
+        center = np.asarray(geometry.center, dtype=float)
+        if not np.isfinite(radius) or not np.all(np.isfinite(center)):
+            return False
+
+        x0, x1 = float(geometry.landslide_interval[0]), float(geometry.landslide_interval[1])
+        xs = np.linspace(x0, x1, 50)
+        slip = np.asarray(geometry.slip_surface(xs), dtype=float)
+        grd = np.asarray(ground_surface(xs), dtype=float)
+        if not np.all(np.isfinite(slip)):
+            return False
+
+        span = max(1.0, abs(x1 - x0))
+        tol = 1e-3 + 1e-6 * span
+        # The slip surface must stay below the ground over the whole interval.
+        if np.any(slip > grd + tol):
+            return False
+        # Require a minimum sliding-mass thickness (rejects zero-area slivers).
+        if np.max(grd - slip) < min_depth:
+            return False
+        return True
+
+    def _make_guarded_solver(self, solver, ground_surface, min_length, min_depth):
+        """Wrap a LEM solver so degenerate / non-physical surfaces are discarded.
+
+        Invalid geometries and non-physical results (FoS that is non-finite or
+        <= 0, i.e. backward or degenerate surfaces) are reported with an infinite
+        factor of safety, so neither the grid search nor the simplex optimiser
+        can ever select them as the critical surface. The signature accepts the
+        (geometry, soil, options) arguments both positionally and by keyword, as
+        used respectively by searchInterface.simplex and find_critical.
+        """
+        def guarded(geometry, soil, options):
+            if not self._is_physical_surface(geometry, ground_surface, min_length, min_depth):
+                return lemResult(method_name='invalid', factor_of_safety=np.inf,
+                                 Lambda=np.nan, optional_outputs={})
+            try:
+                result = solver(geometry, soil, options)
+                fos = float(np.asarray(result.factor_of_safety))
+            except Exception:
+                return lemResult(method_name='invalid', factor_of_safety=np.inf,
+                                 Lambda=np.nan, optional_outputs={})
+            # A negative or non-finite FoS is physically meaningless and is the
+            # signature of a backward/degenerate surface: push it out of the search.
+            if not np.isfinite(fos) or fos <= 0.0:
+                result.factor_of_safety = np.inf
+            return result
+        return guarded
 
     def _get_solver(self, method_name):
         """Return (label, solver_function) based on UI selection."""
@@ -2165,11 +2439,27 @@ Optimization:
         
         return color
 
+    def _color_for_fos(self, fos, fs_min, fs_max):
+        """Map a Factor of Safety to a colour on the shared FoS scale.
+
+        fs_min -> red (critical), fs_max -> green (safer). When the range is
+        degenerate (single surface or equal FoS) the critical red is used.
+        """
+        try:
+            f = float(fos)
+        except Exception:
+            return '#888888'
+        if not np.isfinite(f):
+            return '#888888'
+        span = float(fs_max) - float(fs_min)
+        t = 0.0 if span < 1e-9 else (f - float(fs_min)) / span
+        return fos_to_hex(t)
+
     def _surface_search_label(self, search_type):
         st = (search_type or '').strip().lower()
         return 'Simplex' if st == 'simplex' else 'Grid'
 
-    def _format_surface_label(self, search_type, method_label, fos, color):
+    def _format_surface_label(self, search_type, method_label, fos, color, rank=None):
         search_lbl = self._surface_search_label(search_type)
         method_lbl = str(method_label) if method_label is not None else 'Unknown'
         try:
@@ -2177,7 +2467,8 @@ Optimization:
             fos_part = f"FoS={fos_val:.3f}"
         except Exception:
             fos_part = f"FoS={fos}"
-        return f"{search_lbl} – {method_lbl} ({fos_part})"
+        prefix = f"#{rank} " if rank is not None else ""
+        return f"{prefix}{search_lbl} – {method_lbl} ({fos_part})"
 
     def _draw_plan_surface(self, x_in, x_out, fs, color='#ff0000'):
         """Draw segment corresponding to critical surface on plan and add FS label.
@@ -2286,38 +2577,20 @@ Optimization:
             print(f"_draw_plan_surface error: {e}")
 
     def _store_surface(self, search, method_label, x, y, fs):
-        """Add calculated surface to list, maintaining history.
-        Also draw representative segment on plan and FS label."""
+        """Append a calculated surface to the history.
+
+        Colour, label, width and plan-view overlays are assigned centrally by
+        _update_profile_with_all_surfaces, so that every surface is styled on the
+        shared Factor-of-Safety colour scale once the whole set is known.
+        """
         try:
-            surface_index = len(self.slip_surfaces)
-            color = self._get_color_for_surface(surface_index, search, method_label)
-            label = self._format_surface_label(search, method_label, fs, color)
             self.slip_surfaces.append({
                 'search': search,
                 'method': method_label,
                 'x': x,
                 'y': y,
                 'fs': float(fs),
-                'color': color,
-                'label': label,
             })
-            # Try to draw on plan (segment from x_out to x_in along profile)
-            try:
-                # Calculate x_in/x_out: x values refer to distances along profile (usually in meters)
-                if hasattr(x, '__len__') and len(x) >= 2:
-                    x_start = float(x[0])
-                    x_end = float(x[-1])
-                    # Determine entry/exit: take min/max
-                    x_out = min(x_start, x_end)
-                    x_in = max(x_start, x_end)
-                else:
-                    # If no geometry, no drawing
-                    return
-
-                fs_val = float(fs)
-                self._draw_plan_surface(x_in, x_out, fs_val, color)
-            except Exception as e:
-                print(f"Warning: cannot draw surface on plan: {e}")
         except Exception:
             pass
 

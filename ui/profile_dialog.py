@@ -10,6 +10,40 @@ from qgis.PyQt.QtSvg import QSvgGenerator
 from qgis.core import QgsProject
 
 
+# Anchors for the Factor-of-Safety colour scale (RdYlGn):
+# t=0 -> red (low FoS, unsafe), t=0.5 -> yellow, t=1 -> green (high FoS, safe).
+_FOS_COLOR_ANCHORS = [
+    (0.0, (215, 48, 39)),
+    (0.5, (255, 255, 191)),
+    (1.0, (26, 152, 80)),
+]
+
+
+def fos_to_rgb(t):
+    """Map a normalised value t in [0, 1] to an (r, g, b) tuple on the FoS scale."""
+    try:
+        t = float(t)
+    except Exception:
+        return (136, 136, 136)
+    if t != t:  # NaN
+        return (136, 136, 136)
+    t = max(0.0, min(1.0, t))
+    anchors = _FOS_COLOR_ANCHORS
+    for i in range(len(anchors) - 1):
+        t0, c0 = anchors[i]
+        t1, c1 = anchors[i + 1]
+        if t <= t1:
+            f = 0.0 if t1 == t0 else (t - t0) / (t1 - t0)
+            return tuple(int(round(c0[k] + (c1[k] - c0[k]) * f)) for k in range(3))
+    return anchors[-1][1]
+
+
+def fos_to_hex(t):
+    """Map a normalised value t in [0, 1] to a '#rrggbb' colour on the FoS scale."""
+    r, g, b = fos_to_rgb(t)
+    return '#%02x%02x%02x' % (r, g, b)
+
+
 class ProfileCanvas(QWidget):
     """Qt-based profile renderer compatible with QGIS 4 (no Matplotlib)."""
 
@@ -20,12 +54,14 @@ class ProfileCanvas(QWidget):
         self._x_label = 'Distance [m]'
         self._y_label = 'Elevation [m]'
         self._empty_message = 'No valid data'
+        self._colorbar = None
 
-    def set_plot_data(self, series, x_label='Distance [m]', y_label='Elevation [m]', empty_message='No valid data'):
+    def set_plot_data(self, series, x_label='Distance [m]', y_label='Elevation [m]', empty_message='No valid data', colorbar=None):
         self._series = series or []
         self._x_label = x_label
         self._y_label = y_label
         self._empty_message = empty_message
+        self._colorbar = colorbar
         self.update()
 
     def export_image(self, fmt, path, include_table=False, table_rows=None):
@@ -169,9 +205,44 @@ class ProfileCanvas(QWidget):
                 painter.drawText(QRectF(legend_rect.left() + 30.0, y - 2.0, legend_rect.width() - 34.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, str(item.get('label', '')))
                 y += item_h
 
+        # Factor-of-Safety colour scale (shown when several surfaces are plotted)
+        if self._colorbar:
+            try:
+                self._draw_colorbar(painter, plot_rect, self._colorbar)
+            except Exception:
+                pass
+
         if include_table:
             table_rect = QRectF(plot_rect.left(), plot_rect.bottom() + 20.0, plot_rect.width(), table_h - 24.0)
             self._draw_table(painter, table_rect, table_rows)
+
+    def _draw_colorbar(self, painter, plot_rect, colorbar):
+        """Draw a horizontal Factor-of-Safety colour scale in the top-left of the plot."""
+        fs_min = float(colorbar.get('fs_min', 0.0))
+        fs_max = float(colorbar.get('fs_max', 1.0))
+
+        bar_w = min(170.0, plot_rect.width() * 0.42)
+        bar_h = 10.0
+        bx = plot_rect.left() + 12.0
+        by = plot_rect.top() + 24.0
+
+        # White backdrop so the scale stays readable over the grid/surfaces
+        painter.fillRect(QRectF(bx - 6.0, by - 18.0, bar_w + 12.0, bar_h + 38.0), QColor(255, 255, 255, 235))
+
+        steps = 64
+        seg_w = bar_w / steps
+        for i in range(steps):
+            t = i / float(steps - 1)
+            r, g, b = fos_to_rgb(t)
+            painter.fillRect(QRectF(bx + i * seg_w, by, seg_w + 1.0, bar_h), QColor(r, g, b))
+        painter.setPen(QPen(QColor('#666666'), 1.0))
+        painter.drawRect(QRectF(bx, by, bar_w, bar_h))
+
+        painter.setPen(QPen(QColor('#222222'), 1.0))
+        painter.setFont(QFont('Sans Serif', 8))
+        painter.drawText(QRectF(bx, by - 15.0, bar_w, 12.0), Qt.AlignHCenter, 'Factor of Safety')
+        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignLeft, f"{fs_min:.2f}")
+        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignRight, f"{fs_max:.2f}")
 
     def _draw_table(self, painter, rect, rows):
         headers = ['Layer', 'γ (kN/m³)', 'c (kPa)', 'φ (°)', 'n']
@@ -745,7 +816,16 @@ class ProfileDialog(QDialog):
         self.out_interval_max_spinbox.setValue(0.4)
         self.out_interval_max_spinbox.setDecimals(2)
         grid_layout.addRow("Out - max (fraction):", self.out_interval_max_spinbox)
-        
+
+        # Number of slip surfaces to display (coloured by Factor of Safety)
+        self.grid_num_surfaces_spinbox = QSpinBox()
+        self.grid_num_surfaces_spinbox.setRange(1, 50)
+        self.grid_num_surfaces_spinbox.setValue(1)
+        self.grid_num_surfaces_spinbox.setToolTip(
+            "Number of computed slip surfaces to display, ordered by Factor of Safety.\n"
+            "Surfaces are coloured on a FoS scale (red = critical, green = safer).")
+        grid_layout.addRow("Surfaces to display:", self.grid_num_surfaces_spinbox)
+
         layout.addWidget(grid_group)
         
         # Pulsante calcolo
@@ -832,7 +912,16 @@ class ProfileDialog(QDialog):
         self.max_iterations_spinbox.setRange(50, 1000)
         self.max_iterations_spinbox.setValue(300)
         optimization_layout.addRow("Max iterations:", self.max_iterations_spinbox)
-        
+
+        # Number of slip surfaces to display (coloured by Factor of Safety)
+        self.simplex_num_surfaces_spinbox = QSpinBox()
+        self.simplex_num_surfaces_spinbox.setRange(1, 50)
+        self.simplex_num_surfaces_spinbox.setValue(1)
+        self.simplex_num_surfaces_spinbox.setToolTip(
+            "Number of optimised slip surfaces to display, ordered by Factor of Safety.\n"
+            "Surfaces are coloured on a FoS scale (red = critical, green = safer).")
+        optimization_layout.addRow("Surfaces to display:", self.simplex_num_surfaces_spinbox)
+
         layout.addWidget(optimization_group)
         
         # Pulsante calcolo
@@ -893,11 +982,12 @@ class ProfileDialog(QDialog):
             'in_interval_max': self.in_interval_max_spinbox.value(),
             'out_interval_min': self.out_interval_min_spinbox.value(),
             'out_interval_max': self.out_interval_max_spinbox.value(),
+            'num_surfaces': self.grid_num_surfaces_spinbox.value(),
         }
-        
+
         # Aggiungi parametri stratigrafia
         params.update(self._get_stratigraphy_params())
-        
+
         self.gridStabilityAnalysisRequested.emit(params)
 
     def _emit_simplex_stability_analysis(self):
@@ -918,11 +1008,12 @@ class ProfileDialog(QDialog):
             'eta_min': self.eta_min_spinbox.value(),
             'eta_max': self.eta_max_spinbox.value(),
             'max_iterations': self.max_iterations_spinbox.value(),
+            'num_surfaces': self.simplex_num_surfaces_spinbox.value(),
         }
-        
+
         # Aggiungi parametri stratigrafia
         params.update(self._get_stratigraphy_params())
-        
+
         self.simplexStabilityAnalysisRequested.emit(params)
 
     def updateProfile(self, distances, elevations, slip_surface_points=None, slip_surfaces_list=None):
@@ -1006,22 +1097,50 @@ class ProfileDialog(QDialog):
 
         # Plotta multiple superfici di scivolamento (priorità)
         visible_surfaces = []
+        colorbar = None
         if slip_surfaces_list is not None and len(slip_surfaces_list) > 0:
             # Filtra solo le superfici visibili
             visible_indices = [i for i in range(self.surface_visibility_list.count())
                                if self.surface_visibility_list.item(i).checkState() == 2]
             visible_surfaces = [slip_surfaces_list[i] for i in visible_indices if i < len(slip_surfaces_list)]
 
+            # With several surfaces, convey the Factor-of-Safety scale through the
+            # colour bar and keep the legend uncluttered: only the critical
+            # surface (drawn thicker) keeps a legend entry. The colour bar spans
+            # the whole computed set (the colours were assigned over that set),
+            # not just the currently visible subset.
+            import math
+            fs_vals = []
+            for s in slip_surfaces_list:
+                try:
+                    fv = float(s.get('fs'))
+                    if math.isfinite(fv):
+                        fs_vals.append(fv)
+                except Exception:
+                    continue
+            many = len(visible_surfaces) > 1
+            if len(fs_vals) >= 2:
+                fmn, fmx = min(fs_vals), max(fs_vals)
+                if fmx - fmn > 1e-9:
+                    colorbar = {'fs_min': fmn, 'fs_max': fmx}
+
             for surface in visible_surfaces:
                 points = [(x, y) for x, y in zip(surface.get('x', []), surface.get('y', [])) if x is not None and y is not None]
-                if points:
-                    series.append({
-                        'label': surface.get('label', 'Critical slip surface'),
-                        'color': surface.get('color', '#d62728'),
-                        'width': 2.0,
-                        'style': Qt.SolidLine,
-                        'points': points,
-                    })
+                if not points:
+                    continue
+                width = float(surface.get('width', 2.0))
+                label = surface.get('label', 'Critical slip surface')
+                # Suppress per-surface legend entries for the non-critical curves
+                # when many are shown (the colour bar already explains the scale).
+                if many and width < 3.0:
+                    label = ''
+                series.append({
+                    'label': label,
+                    'color': surface.get('color', '#d62728'),
+                    'width': width,
+                    'style': Qt.SolidLine,
+                    'points': points,
+                })
 
         # Fallback: singola superficie (retrocompatibilità)
         elif slip_surface_points is not None:
@@ -1036,7 +1155,7 @@ class ProfileDialog(QDialog):
                     'points': points,
                 })
 
-        self.profile_canvas.set_plot_data(series)
+        self.profile_canvas.set_plot_data(series, colorbar=colorbar)
 
     def _export_stratigraphy_rows(self):
         rows = []
