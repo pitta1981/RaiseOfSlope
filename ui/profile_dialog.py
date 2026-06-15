@@ -6,7 +6,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
                                  QGroupBox, QTextEdit, QListWidget, QListWidgetItem,
                                  QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction,
-                                 QSizePolicy)
+                                 QSizePolicy, QScrollArea)
 from qgis.PyQt.QtSvg import QSvgGenerator
 from qgis.core import QgsProject
 
@@ -50,7 +50,7 @@ class ProfileCanvas(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(260)
+        self.setMinimumHeight(180)
         self._series = []
         self._x_label = 'Distance [m]'
         self._y_label = 'Elevation [m]'
@@ -335,8 +335,18 @@ class ProfileDialog(QDialog):
         """Imposta il riferimento al plugin principale."""
         self._plugin = plugin
 
+    def _wrap_in_scroll(self, widget):
+        """Wraps a widget in a QScrollArea for use as a tab page."""
+        scroll = QScrollArea()
+        scroll.setWidget(widget)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        return scroll
+
     def _build_ui(self):
         """Costruisce i widget dell'interfaccia con schede per profilo e analisi stabilità."""
+        self.setMinimumSize(480, 420)
         layout = QVBoxLayout(self)
         
         # Crea il widget a schede
@@ -471,11 +481,12 @@ class ProfileDialog(QDialog):
         vis_group = QGroupBox("Surface visibility")
         vis_layout = QVBoxLayout(vis_group)
         self.surface_visibility_list = QListWidget()
+        self.surface_visibility_list.setMaximumHeight(90)
         self.surface_visibility_list.itemChanged.connect(self._on_surface_visibility_changed)
         vis_layout.addWidget(self.surface_visibility_list)
         layout.addWidget(vis_group)
-        
-        self.tab_widget.addTab(profile_widget, "Elevation Profile")
+
+        self.tab_widget.addTab(self._wrap_in_scroll(profile_widget), "Elevation Profile")
 
     def _create_soil_parameters_tab(self):
         """Crea la scheda per i parametri geotecnici (condivisi tra griglia e simplex)."""
@@ -577,7 +588,7 @@ class ProfileDialog(QDialog):
         # Aggiungi uno stretch per spingere tutto in alto
         layout.addStretch()
         
-        self.tab_widget.addTab(soil_widget, "Soil Parameters")
+        self.tab_widget.addTab(self._wrap_in_scroll(soil_widget), "Soil Parameters")
 
     def _create_stratigraphy_tab(self):
         """Crea la scheda per la configurazione di stratigrafia e falda."""
@@ -707,7 +718,7 @@ class ProfileDialog(QDialog):
         # Aggiungi uno stretch per spingere tutto in alto
         layout.addStretch()
         
-        self.tab_widget.addTab(strat_widget, "Stratigraphy & Water Table")
+        self.tab_widget.addTab(self._wrap_in_scroll(strat_widget), "Stratigraphy & Water Table")
     
     def _on_layer2_enabled_changed(self, state):
         """Gestisce l'abilitazione/disabilitazione dei parametri del secondo strato."""
@@ -857,7 +868,7 @@ class ProfileDialog(QDialog):
         
         layout.addWidget(results_group)
         
-        self.tab_widget.addTab(stability_widget, "Grid Analysis")
+        self.tab_widget.addTab(self._wrap_in_scroll(stability_widget), "Grid Analysis")
 
     def _create_simplex_stability_tab(self):
         """Crea la scheda per l'analisi di stabilità con ottimizzazione simplex."""
@@ -948,7 +959,7 @@ class ProfileDialog(QDialog):
         
         layout.addWidget(results_group)
         
-        self.tab_widget.addTab(stability_widget, "Simplex Analysis")
+        self.tab_widget.addTab(self._wrap_in_scroll(stability_widget), "Simplex Analysis")
 
     def _reload_rasters(self):
         """Popola la combo con i raster presenti nel progetto (solo layer di tipo Raster)."""
