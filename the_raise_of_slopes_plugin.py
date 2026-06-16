@@ -1200,13 +1200,14 @@ class TheRaiseOfSlopesPlugin:
             acc.save(fos_path, depth_path)
 
             if params.get('add_to_project'):
-                valid = acc.fos[acc.fos != acc.NODATA]
-                if valid.size:
-                    new_fos, new_depth = self._load_hazard_rasters(
-                        fos_path, depth_path, float(valid.min()), float(valid.max()))
-                else:
-                    new_fos, new_depth = self._load_hazard_rasters(
-                        fos_path, depth_path, 0.0, 1.0)
+                valid_fos = acc.fos[acc.fos != acc.NODATA]
+                valid_depth = acc.depth[acc.depth != acc.NODATA]
+                fs_min_v = float(valid_fos.min()) if valid_fos.size else 0.0
+                fs_max_v = float(valid_fos.max()) if valid_fos.size else 1.0
+                d_min_v = 0.0
+                d_max_v = float(valid_depth.max()) if valid_depth.size else 1.0
+                new_fos, new_depth = self._load_hazard_rasters(
+                    fos_path, depth_path, fs_min_v, fs_max_v, d_min_v, d_max_v)
                 # Restore combo-box selection to the newly loaded layers so that
                 # subsequent runs in "existing" mode still find the right layers.
                 try:
@@ -1222,8 +1223,9 @@ class TheRaiseOfSlopesPlugin:
             self.dlg.setStatus(f"Hazard map error: {e}")
             print(traceback.format_exc())
 
-    def _load_hazard_rasters(self, fos_path, depth_path, fs_min, fs_max):
-        """(Re)load the two hazard rasters into the project, styling the FoS one.
+    def _load_hazard_rasters(self, fos_path, depth_path, fs_min, fs_max,
+                             depth_min=0.0, depth_max=1.0):
+        """(Re)load the two hazard rasters into the project, styling both layers.
 
         Returns (fos_layer, depth_layer) — the newly added layer objects, or None
         for each one that failed to load.  The caller should update any combo-boxes
@@ -1242,6 +1244,10 @@ class TheRaiseOfSlopesPlugin:
         added_depth = None
         depth_layer = QgsRasterLayer(depth_path, "Hazard - Slip depth")
         if depth_layer.isValid():
+            try:
+                self._apply_depth_style(depth_layer, depth_min, depth_max)
+            except Exception as e:
+                print(f"Hazard map: could not style depth raster: {e}")
             QgsProject.instance().addMapLayer(depth_layer)
             added_depth = depth_layer
 
@@ -1272,6 +1278,34 @@ class TheRaiseOfSlopesPlugin:
             r, g, b = fos_to_rgb(t)
             items.append(QgsColorRampShader.ColorRampItem(
                 value, QColor(r, g, b), f"{value:.3f}"))
+        ramp.setColorRampItemList(items)
+        shader = QgsRasterShader()
+        shader.setRasterShaderFunction(ramp)
+        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        layer.setRenderer(renderer)
+
+    def _apply_depth_style(self, layer, depth_min, depth_max):
+        """Apply a sequential white→blue pseudocolor ramp for slip-surface depth."""
+        from qgis.core import (QgsColorRampShader, QgsRasterShader,
+                               QgsSingleBandPseudoColorRenderer)
+        if depth_max <= depth_min:
+            depth_max = depth_min + 1.0
+        ramp = QgsColorRampShader(depth_min, depth_max)
+        ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        # White (0 m / surface) → dark blue (maximum depth)
+        stops = [
+            (255, 255, 255),
+            (198, 219, 239),
+            (107, 174, 214),
+            (33,  113, 181),
+            (8,   48,  107),
+        ]
+        items = []
+        for k, (r, g, b) in enumerate(stops):
+            t = k / (len(stops) - 1)
+            value = depth_min + t * (depth_max - depth_min)
+            items.append(QgsColorRampShader.ColorRampItem(
+                value, QColor(r, g, b), f"{value:.2f} m"))
         ramp.setColorRampItemList(items)
         shader = QgsRasterShader()
         shader.setRasterShaderFunction(ramp)
@@ -1804,7 +1838,7 @@ Total surfaces analyzed: {len(all_results)}
             else:
                 overlap_warning = ""
 
-            simplex_grid_pts = 8
+            simplex_grid_pts = 24
             grid_options = {
                 'num_in_points': simplex_grid_pts,
                 'num_out_points': simplex_grid_pts,
