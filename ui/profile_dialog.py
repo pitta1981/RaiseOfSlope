@@ -6,7 +6,8 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
                                  QGroupBox, QTextEdit, QListWidget, QListWidgetItem,
                                  QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction,
-                                 QSizePolicy, QScrollArea)
+                                 QSizePolicy, QScrollArea,
+                                 QTableWidget, QTableWidgetItem, QHeaderView)
 from qgis.PyQt.QtSvg import QSvgGenerator
 from qgis.core import (QgsProject, QgsMapLayerProxyModel,
                        QgsCoordinateReferenceSystem, QgsRectangle)
@@ -47,12 +48,43 @@ def fos_to_hex(t):
     return '#%02x%02x%02x' % (r, g, b)
 
 
+def _nice_ticks(lo, hi, max_ticks=6):
+    """Return a list of nicely spaced tick values spanning [lo, hi]."""
+    import math
+    span = hi - lo
+    if span <= 0 or max_ticks < 2:
+        return [lo, hi]
+    rough = span / (max_ticks - 1)
+    exp = math.floor(math.log10(rough))
+    frac = rough / (10.0 ** exp)
+    nice = 1.0 if frac < 1.5 else (2.0 if frac < 3.0 else (5.0 if frac < 7.0 else 10.0))
+    step = nice * (10.0 ** exp)
+    start = math.ceil(lo / step - 1e-9) * step
+    ticks = []
+    v = start
+    while v <= hi + step * 1e-9:
+        ticks.append(round(v, max(0, int(-exp) + 1)))
+        v += step
+    return ticks if ticks else [lo, hi]
+
+
+def _format_tick(v):
+    """Format a tick value compactly."""
+    if v == 0.0:
+        return '0'
+    if abs(round(v) - v) < 1e-6:
+        return str(int(round(v)))
+    if abs(round(v * 10) - v * 10) < 1e-5:
+        return f'{v:.1f}'
+    return f'{v:.2f}'
+
+
 class ProfileCanvas(QWidget):
     """Qt-based profile renderer compatible with QGIS 4 (no Matplotlib)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(180)
+        self.setMinimumHeight(250)
         self._series = []
         self._x_label = 'Distance [m]'
         self._y_label = 'Elevation [m]'
@@ -68,10 +100,19 @@ class ProfileCanvas(QWidget):
         self.update()
 
     def export_image(self, fmt, path, include_table=False, table_rows=None):
-        width = max(self.width(), 800)
-        height = max(self.height(), 420)
-        table_h = 150 if include_table else 0
-        total_h = height + table_h
+        import math
+        width = max(self.width(), 900)
+        legend_items = [s for s in self._series if s.get('label')]
+        n_leg = len(legend_items)
+        if n_leg > 0:
+            max_cols = max(1, math.ceil(n_leg / 2))
+            n_rows = math.ceil(n_leg / max_cols)
+            legend_h = int(n_rows * 17 + 12)
+        else:
+            legend_h = 0
+        table_section = 150 if include_table else 0
+        # 20 top + 350 plot + 40 bottom + legend + table
+        total_h = max(self.height(), 20 + 350 + 40 + legend_h) + table_section
 
         if str(fmt).lower() == 'svg':
             svg = QSvgGenerator()
@@ -100,15 +141,38 @@ class ProfileCanvas(QWidget):
         painter.end()
 
     def _paint_content(self, painter, rect, include_table=False, table_rows=None):
+        import math
         table_rows = table_rows or []
-        left = 62.0
-        right = 18.0
-        top = 16.0
-        bottom = 44.0
-        legend_pad = 8.0
+
+        left = 72.0
+        right = 20.0
+        top = 20.0
+        tick_len = 5.0
+        x_tick_h = 13.0
+        x_ax_h = 16.0
+        bottom = tick_len + x_tick_h + x_ax_h + 6.0
+
+        legend_items = [s for s in self._series if s.get('label')]
+        item_h = 17.0
+        leg_v_pad = 6.0
+        MAX_ROWS = 2
+        n_leg = len(legend_items)
+        if n_leg > 0:
+            max_cols = max(1, math.ceil(n_leg / MAX_ROWS))
+            n_rows = math.ceil(n_leg / max_cols)
+            legend_section_h = n_rows * item_h + leg_v_pad * 2
+        else:
+            max_cols = 1
+            legend_section_h = 0.0
+
         table_h = 130.0 if include_table else 0.0
 
-        plot_rect = QRectF(rect.left() + left, rect.top() + top, rect.width() - left - right, rect.height() - top - bottom - table_h)
+        plot_rect = QRectF(
+            rect.left() + left,
+            rect.top() + top,
+            rect.width() - left - right,
+            rect.height() - top - bottom - legend_section_h - table_h,
+        )
         if plot_rect.width() < 10 or plot_rect.height() < 10:
             return
 
@@ -116,12 +180,7 @@ class ProfileCanvas(QWidget):
         painter.setPen(QPen(QColor('#999999'), 1.0))
         painter.drawRect(plot_rect)
 
-        all_points = []
-        for s in self._series:
-            pts = s.get('points', [])
-            for p in pts:
-                all_points.append(p)
-
+        all_points = [p for s in self._series for p in s.get('points', [])]
         if not all_points:
             painter.setPen(QPen(QColor('#555555'), 1.0))
             painter.drawText(plot_rect, Qt.AlignCenter, self._empty_message)
@@ -129,10 +188,8 @@ class ProfileCanvas(QWidget):
 
         x_vals = [p[0] for p in all_points]
         y_vals = [p[1] for p in all_points]
-        x_min = min(x_vals)
-        x_max = max(x_vals)
-        y_min = min(y_vals)
-        y_max = max(y_vals)
+        x_min, x_max = min(x_vals), max(x_vals)
+        y_min, y_max = min(y_vals), max(y_vals)
 
         if x_max <= x_min:
             x_max = x_min + 1.0
@@ -141,26 +198,30 @@ class ProfileCanvas(QWidget):
 
         x_pad = 0.02 * (x_max - x_min)
         y_pad = 0.08 * (y_max - y_min)
-        x_min -= x_pad
-        x_max += x_pad
-        y_min -= y_pad
-        y_max += y_pad
+        x_min -= x_pad; x_max += x_pad
+        y_min -= y_pad; y_max += y_pad
 
         def map_pt(x, y):
             xp = plot_rect.left() + (x - x_min) / (x_max - x_min) * plot_rect.width()
             yp = plot_rect.bottom() - (y - y_min) / (y_max - y_min) * plot_rect.height()
             return QPointF(xp, yp)
 
-        grid_pen = QPen(QColor('#d7d7d7'), 1.0)
+        # Grid
+        x_ticks = _nice_ticks(x_min, x_max, 6)
+        y_ticks = _nice_ticks(y_min, y_max, 5)
+        grid_pen = QPen(QColor('#d7d7d7'), 0.8)
         grid_pen.setStyle(Qt.DashLine)
         painter.setPen(grid_pen)
-        n_grid = 5
-        for i in range(1, n_grid):
-            gx = plot_rect.left() + (i / float(n_grid)) * plot_rect.width()
-            gy = plot_rect.top() + (i / float(n_grid)) * plot_rect.height()
-            painter.drawLine(QPointF(gx, plot_rect.top()), QPointF(gx, plot_rect.bottom()))
-            painter.drawLine(QPointF(plot_rect.left(), gy), QPointF(plot_rect.right(), gy))
+        for xv in x_ticks:
+            if x_min <= xv <= x_max:
+                gx = plot_rect.left() + (xv - x_min) / (x_max - x_min) * plot_rect.width()
+                painter.drawLine(QPointF(gx, plot_rect.top()), QPointF(gx, plot_rect.bottom()))
+        for yv in y_ticks:
+            if y_min <= yv <= y_max:
+                gy = plot_rect.bottom() - (yv - y_min) / (y_max - y_min) * plot_rect.height()
+                painter.drawLine(QPointF(plot_rect.left(), gy), QPointF(plot_rect.right(), gy))
 
+        # Data series
         for s in self._series:
             points = s.get('points', [])
             if len(points) < 2:
@@ -171,52 +232,81 @@ class ProfileCanvas(QWidget):
             painter.setPen(pen)
             painter.drawPolyline(poly)
 
-        painter.setPen(QPen(QColor('#222222'), 1.0))
-        painter.setFont(QFont('Sans Serif', 9))
-        painter.drawText(QRectF(plot_rect.left(), plot_rect.bottom() + 8, plot_rect.width(), 20), Qt.AlignCenter, self._x_label)
-
-        painter.save()
-        painter.translate(rect.left() + 16, plot_rect.center().y())
-        painter.rotate(-90)
-        painter.drawText(QRectF(-plot_rect.height() / 2, -16, plot_rect.height(), 20), Qt.AlignCenter, self._y_label)
-        painter.restore()
-
+        # Tick marks and labels
         tick_font = QFont('Sans Serif', 8)
         painter.setFont(tick_font)
-        painter.drawText(QRectF(plot_rect.left() - 30, plot_rect.bottom() - 8, 60, 14), Qt.AlignCenter, f"{x_min:.1f}")
-        painter.drawText(QRectF(plot_rect.right() - 30, plot_rect.bottom() - 8, 60, 14), Qt.AlignCenter, f"{x_max:.1f}")
-        painter.drawText(QRectF(plot_rect.left() - 56, plot_rect.top() - 6, 52, 14), Qt.AlignRight, f"{y_max:.1f}")
-        painter.drawText(QRectF(plot_rect.left() - 56, plot_rect.bottom() - 8, 52, 14), Qt.AlignRight, f"{y_min:.1f}")
+        painter.setPen(QPen(QColor('#333333'), 1.0))
 
-        legend_items = [s for s in self._series if s.get('label')]
-        if legend_items:
-            item_h = 16.0
-            legend_w = min(280.0, plot_rect.width() * 0.55)
-            legend_h = min(plot_rect.height() * 0.55, item_h * len(legend_items) + 10.0)
-            legend_rect = QRectF(plot_rect.right() - legend_w - legend_pad, plot_rect.top() + legend_pad, legend_w, legend_h)
-            painter.fillRect(legend_rect, QColor(255, 255, 255, 235))
-            painter.setPen(QPen(QColor('#bbbbbb'), 1.0))
-            painter.drawRect(legend_rect)
+        for xv in x_ticks:
+            if x_min <= xv <= x_max:
+                gx = plot_rect.left() + (xv - x_min) / (x_max - x_min) * plot_rect.width()
+                painter.drawLine(QPointF(gx, plot_rect.bottom()), QPointF(gx, plot_rect.bottom() + tick_len))
+                painter.drawText(
+                    QRectF(gx - 28.0, plot_rect.bottom() + tick_len + 1.0, 56.0, x_tick_h),
+                    Qt.AlignCenter, _format_tick(xv),
+                )
 
-            y = legend_rect.top() + 8.0
-            for item in legend_items:
-                if y + item_h > legend_rect.bottom() - 2:
-                    break
-                painter.setPen(QPen(QColor(item.get('color', '#000000')), float(item.get('width', 2.0))))
-                painter.drawLine(QPointF(legend_rect.left() + 8.0, y + 6.0), QPointF(legend_rect.left() + 26.0, y + 6.0))
-                painter.setPen(QPen(QColor('#222222'), 1.0))
-                painter.drawText(QRectF(legend_rect.left() + 30.0, y - 2.0, legend_rect.width() - 34.0, item_h), Qt.AlignLeft | Qt.AlignVCenter, str(item.get('label', '')))
-                y += item_h
+        for yv in y_ticks:
+            if y_min <= yv <= y_max:
+                gy = plot_rect.bottom() - (yv - y_min) / (y_max - y_min) * plot_rect.height()
+                painter.drawLine(QPointF(plot_rect.left() - tick_len, gy), QPointF(plot_rect.left(), gy))
+                painter.drawText(
+                    QRectF(rect.left() + 2.0, gy - 7.0, left - tick_len - 5.0, 14.0),
+                    Qt.AlignRight | Qt.AlignVCenter, _format_tick(yv),
+                )
 
-        # Factor-of-Safety colour scale (shown when several surfaces are plotted)
+        # Axis labels
+        painter.setPen(QPen(QColor('#222222'), 1.0))
+        painter.setFont(QFont('Sans Serif', 9))
+        x_lbl_y = plot_rect.bottom() + tick_len + x_tick_h + 2.0
+        painter.drawText(
+            QRectF(plot_rect.left(), x_lbl_y, plot_rect.width(), x_ax_h),
+            Qt.AlignCenter, self._x_label,
+        )
+        painter.save()
+        painter.translate(rect.left() + 14.0, plot_rect.center().y())
+        painter.rotate(-90)
+        painter.drawText(
+            QRectF(-plot_rect.height() / 2.0, -10.0, plot_rect.height(), 20.0),
+            Qt.AlignCenter, self._y_label,
+        )
+        painter.restore()
+
+        # Colorbar (FoS scale — stays inside the plot, top-left)
         if self._colorbar:
             try:
                 self._draw_colorbar(painter, plot_rect, self._colorbar)
             except Exception:
                 pass
 
+        # Legend — rendered horizontally in a strip below the x-axis label
+        if legend_items:
+            col_w = plot_rect.width() / max_cols
+            legend_top = plot_rect.bottom() + bottom + leg_v_pad
+            painter.setFont(QFont('Sans Serif', 8))
+            for i, item in enumerate(legend_items):
+                col = i % max_cols
+                row = i // max_cols
+                lx = plot_rect.left() + col * col_w
+                ly = legend_top + row * item_h
+                swatch_pen = QPen(
+                    QColor(item.get('color', '#000000')),
+                    float(item.get('width', 2.0)),
+                )
+                swatch_pen.setStyle(item.get('style', Qt.SolidLine))
+                painter.setPen(swatch_pen)
+                painter.drawLine(QPointF(lx + 4.0, ly + item_h / 2.0), QPointF(lx + 26.0, ly + item_h / 2.0))
+                painter.setPen(QPen(QColor('#222222'), 1.0))
+                painter.drawText(
+                    QRectF(lx + 30.0, ly, col_w - 34.0, item_h),
+                    Qt.AlignLeft | Qt.AlignVCenter,
+                    str(item.get('label', '')),
+                )
+
+        # Stratigraphy table (optional, for exports)
         if include_table:
-            table_rect = QRectF(plot_rect.left(), plot_rect.bottom() + 20.0, plot_rect.width(), table_h - 24.0)
+            table_top = plot_rect.bottom() + bottom + legend_section_h + 8.0
+            table_rect = QRectF(plot_rect.left(), table_top, plot_rect.width(), table_h - 12.0)
             self._draw_table(painter, table_rect, table_rows)
 
     def _draw_colorbar(self, painter, plot_rect, colorbar):
@@ -441,6 +531,11 @@ class ProfileDialog(QDialog):
         self.btnClearSurfaces.clicked.connect(self.clearSurfacesRequested.emit)
         hl_actions.addWidget(self.btnClearSurfaces)
 
+        self.btnReport = QPushButton("Open Report")
+        self.btnReport.setToolTip("Open a full-size report-ready view with legend and parameters table")
+        self.btnReport.clicked.connect(self._do_open_report)
+        hl_actions.addWidget(self.btnReport)
+
         # Export button as dropdown to save horizontal space
         self.btnExport = QToolButton()
         self.btnExport.setText("Export")
@@ -515,15 +610,15 @@ class ProfileDialog(QDialog):
         # Peso specifico
         self.gamma_spinbox = QDoubleSpinBox()
         self.gamma_spinbox.setRange(10.0, 30.0)
-        self.gamma_spinbox.setValue(20.0)
+        self.gamma_spinbox.setValue(18.0)
         self.gamma_spinbox.setSuffix(" kN/m³")
         self.gamma_spinbox.setDecimals(1)
         soil_layout.addRow("Unit weight (γ):", self.gamma_spinbox)
         
         # Cohesion
         self.cohesion_spinbox = QDoubleSpinBox()
-        self.cohesion_spinbox.setRange(0.0, 100.0)
-        self.cohesion_spinbox.setValue(10.0)
+        self.cohesion_spinbox.setRange(0.0, 200.0)
+        self.cohesion_spinbox.setValue(5.0)
         self.cohesion_spinbox.setSuffix(" kPa")
         self.cohesion_spinbox.setDecimals(1)
         soil_layout.addRow("Cohesion (c):", self.cohesion_spinbox)
@@ -578,7 +673,7 @@ class ProfileDialog(QDialog):
         
         self.cohesion_2_spinbox = QDoubleSpinBox()
         self.cohesion_2_spinbox.setRange(0.0, 1000.0)
-        self.cohesion_2_spinbox.setValue(50.0)
+        self.cohesion_2_spinbox.setValue(150.0)
         self.cohesion_2_spinbox.setSuffix(" kPa")
         self.cohesion_2_spinbox.setDecimals(1)
         layer2_layout.addRow("Cohesion (c₂):", self.cohesion_2_spinbox)
@@ -838,7 +933,7 @@ class ProfileDialog(QDialog):
         # In interval (fraction of profile)
         self.in_interval_min_spinbox = QDoubleSpinBox()
         self.in_interval_min_spinbox.setRange(0.0, 1.0)
-        self.in_interval_min_spinbox.setValue(0.6)
+        self.in_interval_min_spinbox.setValue(0.0)
         self.in_interval_min_spinbox.setDecimals(2)
         grid_layout.addRow("In - min (fraction):", self.in_interval_min_spinbox)
         
@@ -857,7 +952,7 @@ class ProfileDialog(QDialog):
         
         self.out_interval_max_spinbox = QDoubleSpinBox()
         self.out_interval_max_spinbox.setRange(0.0, 1.0)
-        self.out_interval_max_spinbox.setValue(0.4)
+        self.out_interval_max_spinbox.setValue(1.0)
         self.out_interval_max_spinbox.setDecimals(2)
         grid_layout.addRow("Out - max (fraction):", self.out_interval_max_spinbox)
 
@@ -902,7 +997,7 @@ class ProfileDialog(QDialog):
         # x_in bounds (frazione del profilo)
         self.x_in_min_spinbox = QDoubleSpinBox()
         self.x_in_min_spinbox.setRange(0.0, 1.0)
-        self.x_in_min_spinbox.setValue(0.5)
+        self.x_in_min_spinbox.setValue(0.0)
         self.x_in_min_spinbox.setDecimals(2)
         bounds_layout.addRow("x_in - min (fraction):", self.x_in_min_spinbox)
         
@@ -921,7 +1016,7 @@ class ProfileDialog(QDialog):
         
         self.x_out_max_spinbox = QDoubleSpinBox()
         self.x_out_max_spinbox.setRange(0.0, 1.0)
-        self.x_out_max_spinbox.setValue(0.5)
+        self.x_out_max_spinbox.setValue(1.0)
         self.x_out_max_spinbox.setDecimals(2)
         bounds_layout.addRow("x_out - max (fraction):", self.x_out_max_spinbox)
         
@@ -955,7 +1050,7 @@ class ProfileDialog(QDialog):
         # Number of slip surfaces to display (coloured by Factor of Safety)
         self.simplex_num_surfaces_spinbox = QSpinBox()
         self.simplex_num_surfaces_spinbox.setRange(1, 50)
-        self.simplex_num_surfaces_spinbox.setValue(1)
+        self.simplex_num_surfaces_spinbox.setValue(5)
         self.simplex_num_surfaces_spinbox.setToolTip(
             "Number of optimised slip surfaces to display, ordered by Factor of Safety.\n"
             "Surfaces are coloured on a FoS scale (red = critical, green = safer).")
@@ -1640,12 +1735,148 @@ class ProfileDialog(QDialog):
         if params['enable_water']:
             water_def_id = self.water_definition_group.checkedId()
             params['water_definition_mode'] = water_def_id  # 0=const_depth, 1=raster, 2=elevation
-            
+
             if water_def_id == 0:  # Profondità costante
                 params['water_const_depth'] = self.water_const_depth_spinbox.value()
             elif water_def_id == 1:  # Raster
                 params['water_raster_layer'] = self.water_raster_combo.currentData()
             elif water_def_id == 2:  # Quota assoluta
                 params['water_elevation'] = self.water_elevation_spinbox.value()
-        
+
         return params
+
+    def _do_open_report(self):
+        """Apre il dialog Report per visualizzare il profilo in formato relazione."""
+        series = list(getattr(self.profile_canvas, '_series', []))
+        colorbar = getattr(self.profile_canvas, '_colorbar', None)
+        strat_rows = self._export_stratigraphy_rows()
+
+        results_parts = []
+        try:
+            t = self.grid_results_text.toPlainText()
+            if t and t.strip() not in ('', 'No analysis executed'):
+                results_parts.append('=== Grid Analysis ===\n' + t)
+        except Exception:
+            pass
+        try:
+            t = self.simplex_results_text.toPlainText()
+            if t and t.strip() not in ('', 'No analysis executed'):
+                results_parts.append('=== Simplex Analysis ===\n' + t)
+        except Exception:
+            pass
+        results_text = '\n\n'.join(results_parts)
+
+        dlg = ReportDialog(series, colorbar, strat_rows, results_text, parent=self)
+        dlg.exec_()
+
+
+class ReportDialog(QDialog):
+    """Finestra report per inserimento in relazione geotecnica.
+
+    Mostra il profilo a schermo intero con legenda separata, tabella dei
+    parametri geotecnici e riepilogo dei risultati. Esporta PNG o SVG.
+    """
+
+    def __init__(self, series, colorbar, stratigraphy_rows, results_text='', parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("The Raise Of Slopes - Profile Report")
+        self.resize(960, 720)
+        self._series = series
+        self._colorbar = colorbar
+        self._strat_rows = stratigraphy_rows
+        self._results_text = results_text
+        self._build_ui()
+
+    def _build_ui(self):
+        from datetime import date
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        layout.setContentsMargins(14, 10, 14, 10)
+
+        # ── Header ───────────────────────────────────────────────────────────
+        title = QLabel('The Raise Of Slopes — Stability Analysis Report')
+        title_font = QFont('Sans Serif', 12)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        date_lbl = QLabel(f'Generated: {date.today().isoformat()}')
+        date_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(date_lbl)
+
+        # ── Profile canvas ───────────────────────────────────────────────────
+        self.canvas = ProfileCanvas(self)
+        self.canvas.setMinimumHeight(400)
+        self.canvas.set_plot_data(self._series, colorbar=self._colorbar)
+        layout.addWidget(self.canvas, stretch=3)
+
+        # ── Bottom row: parameters table + results ───────────────────────────
+        bottom = QHBoxLayout()
+        bottom.setSpacing(10)
+
+        if self._strat_rows:
+            param_group = QGroupBox('Geotechnical Parameters')
+            pg_layout = QVBoxLayout(param_group)
+            pg_layout.setContentsMargins(6, 6, 6, 6)
+            headers = ['Layer', 'γ (kN/m³)', 'c (kPa)', 'φ (°)', 'n']
+            tbl = QTableWidget(len(self._strat_rows), len(headers))
+            tbl.setHorizontalHeaderLabels(headers)
+            tbl.setMaximumHeight(110)
+            tbl.setEditTriggers(QTableWidget.NoEditTriggers)
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            tbl.verticalHeader().setVisible(False)
+            for r, row in enumerate(self._strat_rows):
+                for c, val in enumerate(row):
+                    tbl.setItem(r, c, QTableWidgetItem(str(val)))
+            pg_layout.addWidget(tbl)
+            bottom.addWidget(param_group, stretch=2)
+
+        if self._results_text:
+            res_group = QGroupBox('Analysis Results')
+            rg_layout = QVBoxLayout(res_group)
+            rg_layout.setContentsMargins(6, 6, 6, 6)
+            res_edit = QTextEdit()
+            res_edit.setPlainText(self._results_text)
+            res_edit.setReadOnly(True)
+            res_edit.setMaximumHeight(110)
+            res_edit.setFont(QFont('Monospace', 8))
+            rg_layout.addWidget(res_edit)
+            bottom.addWidget(res_group, stretch=3)
+
+        if bottom.count() > 0:
+            layout.addLayout(bottom)
+
+        # ── Export / close buttons ───────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        btn_png = QPushButton('Export PNG')
+        btn_png.clicked.connect(self._export_png)
+        btn_row.addWidget(btn_png)
+
+        btn_svg = QPushButton('Export SVG')
+        btn_svg.clicked.connect(self._export_svg)
+        btn_row.addWidget(btn_svg)
+
+        btn_close = QPushButton('Close')
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+
+        layout.addLayout(btn_row)
+
+    def _export_png(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Export Report PNG', 'report.png', 'PNG (*.png)')
+        if path:
+            self.canvas.export_image('png', path,
+                                     include_table=bool(self._strat_rows),
+                                     table_rows=self._strat_rows)
+
+    def _export_svg(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Export Report SVG', 'report.svg', 'SVG (*.svg)')
+        if path:
+            self.canvas.export_image('svg', path,
+                                     include_table=bool(self._strat_rows),
+                                     table_rows=self._strat_rows)
