@@ -8,7 +8,9 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction,
                                  QSizePolicy, QScrollArea)
 from qgis.PyQt.QtSvg import QSvgGenerator
-from qgis.core import QgsProject
+from qgis.core import (QgsProject, QgsMapLayerProxyModel,
+                       QgsCoordinateReferenceSystem, QgsRectangle)
+from qgis.gui import QgsExtentGroupBox, QgsMapLayerComboBox, QgsFileWidget
 
 
 # Anchors for the Factor-of-Safety colour scale (RdYlGn):
@@ -300,6 +302,7 @@ class ProfileDialog(QDialog):
     gridStabilityAnalysisRequested = pyqtSignal(dict)  # parameters for grid analysis
     simplexStabilityAnalysisRequested = pyqtSignal(dict)  # parameters for simplex analysis
     clearSurfacesRequested = pyqtSignal()  # richiesta pulizia superfici dal grafico
+    writeHazardMapRequested = pyqtSignal(dict)  # richiesta scrittura/aggiornamento mappa pericolosità
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -334,6 +337,15 @@ class ProfileDialog(QDialog):
     def set_plugin(self, plugin):
         """Imposta il riferimento al plugin principale."""
         self._plugin = plugin
+        # Wire the map canvas into the hazard-map extent widget now that the
+        # plugin (and thus iface) is available; _build_ui runs before this.
+        try:
+            canvas = plugin.iface.mapCanvas()
+            self.hazard_extent_group.setMapCanvas(canvas)
+            self.hazard_extent_group.setCurrentExtent(canvas.extent(), canvas.mapSettings().destinationCrs())
+        except Exception:
+            pass
+        self._sync_hazard_dem()
 
     def _wrap_in_scroll(self, widget):
         """Wraps a widget in a QScrollArea for use as a tab page."""
@@ -367,6 +379,9 @@ class ProfileDialog(QDialog):
         
         # Quinta scheda: Analisi di stabilità con Simplex
         self._create_simplex_stability_tab()
+
+        # Sesta scheda (opzionale): Mappa di pericolosità (raster FoS / profondità)
+        self._create_hazard_map_tab()
 
         # Widget calcolo FOS sempre visibile (sotto le tab)
         fos_group = QGroupBox("Factor of Safety Calculation")
@@ -960,6 +975,257 @@ class ProfileDialog(QDialog):
         layout.addWidget(results_group)
         
         self.tab_widget.addTab(self._wrap_in_scroll(stability_widget), "Simplex Analysis")
+
+    def _create_hazard_map_tab(self):
+        """Crea la scheda opzionale per accumulare i risultati in due raster
+        (FoS minimo per cella e profondità della superficie corrispondente)."""
+        hazard_widget = QWidget()
+        layout = QVBoxLayout(hazard_widget)
+
+        intro = QLabel(
+            "Accumulate the analysis results into two paired rasters: the minimum "
+            "Factor of Safety per cell and the corresponding slip-surface depth.")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        # --- Output mode: create new / update existing -------------------
+        self.hazard_mode_group = QButtonGroup(self)
+        self.hazard_new_radio = QRadioButton("Create new rasters")
+        self.hazard_existing_radio = QRadioButton("Update existing rasters")
+        self.hazard_mode_group.addButton(self.hazard_new_radio, 0)
+        self.hazard_mode_group.addButton(self.hazard_existing_radio, 1)
+        self.hazard_new_radio.setChecked(True)
+        self.hazard_mode_group.buttonClicked.connect(self._on_hazard_mode_changed)
+
+        mode_group = QGroupBox("Output mode")
+        mode_layout = QVBoxLayout(mode_group)
+        mode_layout.addWidget(self.hazard_new_radio)
+        mode_layout.addWidget(self.hazard_existing_radio)
+        layout.addWidget(mode_group)
+
+        # --- Create new: grid + output paths -----------------------------
+        self.hazard_new_widget = QGroupBox("New rasters")
+        new_layout = QVBoxLayout(self.hazard_new_widget)
+
+        self.hazard_extent_group = QgsExtentGroupBox()
+        self.hazard_extent_group.setTitle("Output extent")
+        new_layout.addWidget(self.hazard_extent_group)
+
+        cell_form = QFormLayout()
+        self.hazard_cell_size_spinbox = QDoubleSpinBox()
+        self.hazard_cell_size_spinbox.setRange(0.001, 100000.0)
+        self.hazard_cell_size_spinbox.setDecimals(3)
+        self.hazard_cell_size_spinbox.setValue(1.0)
+        self.hazard_cell_size_spinbox.setSuffix(" m")
+        cell_form.addRow("Cell size:", self.hazard_cell_size_spinbox)
+        new_layout.addLayout(cell_form)
+
+        path_form = QFormLayout()
+        self.hazard_fos_file = QgsFileWidget()
+        self.hazard_fos_file.setStorageMode(QgsFileWidget.SaveFile)
+        self.hazard_fos_file.setFilter("GeoTIFF (*.tif *.tiff)")
+        path_form.addRow("FoS raster:", self.hazard_fos_file)
+        self.hazard_depth_file = QgsFileWidget()
+        self.hazard_depth_file.setStorageMode(QgsFileWidget.SaveFile)
+        self.hazard_depth_file.setFilter("GeoTIFF (*.tif *.tiff)")
+        path_form.addRow("Depth raster:", self.hazard_depth_file)
+        new_layout.addLayout(path_form)
+
+        layout.addWidget(self.hazard_new_widget)
+
+        # --- Update existing: pick layers + overwrite toggle -------------
+        self.hazard_existing_widget = QGroupBox("Existing rasters")
+        existing_layout = QFormLayout(self.hazard_existing_widget)
+        self.hazard_fos_layer_combo = QgsMapLayerComboBox()
+        self.hazard_fos_layer_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        existing_layout.addRow("FoS raster:", self.hazard_fos_layer_combo)
+        self.hazard_depth_layer_combo = QgsMapLayerComboBox()
+        self.hazard_depth_layer_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        existing_layout.addRow("Depth raster:", self.hazard_depth_layer_combo)
+        self.hazard_overwrite_checkbox = QCheckBox("Overwrite (clear) instead of update")
+        existing_layout.addRow(self.hazard_overwrite_checkbox)
+        self.hazard_existing_widget.setVisible(False)
+        layout.addWidget(self.hazard_existing_widget)
+
+        # --- Options + action -------------------------------------------
+        self.hazard_auto_update_checkbox = QCheckBox("Update rasters automatically after each analysis")
+        layout.addWidget(self.hazard_auto_update_checkbox)
+
+        self.hazard_add_to_project_checkbox = QCheckBox("Load resulting rasters into the project")
+        self.hazard_add_to_project_checkbox.setChecked(True)
+        layout.addWidget(self.hazard_add_to_project_checkbox)
+
+        self.btnWriteHazardMap = QPushButton("Add current result to map")
+        self.btnWriteHazardMap.clicked.connect(self._emit_write_hazard_map)
+        layout.addWidget(self.btnWriteHazardMap)
+
+        layout.addStretch()
+        self.tab_widget.addTab(self._wrap_in_scroll(hazard_widget), "Hazard Map")
+
+        # Keep the hazard grid aligned with the profile DEM selection.
+        try:
+            self.cboRaster.currentIndexChanged.connect(self._sync_hazard_dem)
+        except Exception:
+            pass
+
+    def _on_hazard_mode_changed(self):
+        """Toggle the new/existing parameter blocks based on the selected mode."""
+        is_new = self.hazard_mode_group.checkedId() == 0
+        self.hazard_new_widget.setVisible(is_new)
+        self.hazard_existing_widget.setVisible(not is_new)
+
+    def _sync_hazard_dem(self):
+        """Align the hazard extent widget and default cell size to the profile DEM."""
+        dem = self.cboRaster.currentData() if hasattr(self, 'cboRaster') else None
+        if dem is None:
+            return
+        try:
+            self.hazard_extent_group.setOutputCrs(dem.crs())
+            self.hazard_extent_group.setOriginalExtent(dem.extent(), dem.crs())
+            self.hazard_extent_group.setOutputExtentFromOriginal()
+        except Exception:
+            pass
+        try:
+            px = abs(dem.rasterUnitsPerPixelX())
+            py = abs(dem.rasterUnitsPerPixelY())
+            cell = (px + py) / 2.0 if (px and py) else (px or py)
+            if cell and cell > 0:
+                self.hazard_cell_size_spinbox.setValue(cell)
+        except Exception:
+            pass
+
+    def hazard_auto_update_enabled(self):
+        """Whether the hazard rasters should be refreshed after each analysis."""
+        try:
+            return self.hazard_auto_update_checkbox.isChecked()
+        except Exception:
+            return False
+
+    def get_hazard_map_params(self):
+        """Collect the hazard-map configuration into a dict for the plugin."""
+        mode = 'existing' if self.hazard_mode_group.checkedId() == 1 else 'new'
+        params = {
+            'mode': mode,
+            'add_to_project': self.hazard_add_to_project_checkbox.isChecked(),
+        }
+        if mode == 'new':
+            params['dem'] = self.cboRaster.currentData()
+            extent = self.hazard_extent_group.outputExtent()
+            params['extent'] = (extent.xMinimum(), extent.yMinimum(),
+                                extent.xMaximum(), extent.yMaximum())
+            params['out_crs'] = self.hazard_extent_group.outputCrs()
+            params['cell_size'] = self.hazard_cell_size_spinbox.value()
+            params['fos_path'] = self.hazard_fos_file.filePath()
+            params['depth_path'] = self.hazard_depth_file.filePath()
+        else:
+            params['fos_layer'] = self.hazard_fos_layer_combo.currentLayer()
+            params['depth_layer'] = self.hazard_depth_layer_combo.currentLayer()
+            params['overwrite'] = self.hazard_overwrite_checkbox.isChecked()
+        return params
+
+    def _emit_write_hazard_map(self):
+        self.writeHazardMapRequested.emit(self.get_hazard_map_params())
+
+    def set_hazard_layer_combos(self, fos_layer, depth_layer):
+        """Update the 'existing' combo-boxes after the rasters have been reloaded.
+
+        Called by the plugin after _load_hazard_rasters removes old layers and adds
+        fresh ones — the combos would otherwise reset to an empty/wrong selection.
+        """
+        if fos_layer is not None:
+            self.hazard_fos_layer_combo.setLayer(fos_layer)
+        if depth_layer is not None:
+            self.hazard_depth_layer_combo.setLayer(depth_layer)
+
+    def get_hazard_state(self):
+        """Serialise the hazard-map tab configuration into a JSON-friendly dict."""
+        try:
+            mode = 'existing' if self.hazard_mode_group.checkedId() == 1 else 'new'
+            extent = self.hazard_extent_group.outputExtent()
+            crs = self.hazard_extent_group.outputCrs()
+            state = {
+                'mode': mode,
+                'cell_size': self.hazard_cell_size_spinbox.value(),
+                'extent': ([extent.xMinimum(), extent.yMinimum(),
+                            extent.xMaximum(), extent.yMaximum()]
+                           if extent is not None and not extent.isEmpty() else None),
+                'out_crs': crs.authid() if crs is not None and crs.isValid() else '',
+                'fos_path': self.hazard_fos_file.filePath(),
+                'depth_path': self.hazard_depth_file.filePath(),
+                'overwrite': self.hazard_overwrite_checkbox.isChecked(),
+                'auto_update': self.hazard_auto_update_checkbox.isChecked(),
+                'add_to_project': self.hazard_add_to_project_checkbox.isChecked(),
+            }
+            fos_layer = self.hazard_fos_layer_combo.currentLayer()
+            depth_layer = self.hazard_depth_layer_combo.currentLayer()
+            state['fos_layer'] = ({'id': fos_layer.id(), 'name': fos_layer.name()}
+                                  if fos_layer is not None else None)
+            state['depth_layer'] = ({'id': depth_layer.id(), 'name': depth_layer.name()}
+                                    if depth_layer is not None else None)
+            return state
+        except Exception:
+            return {}
+
+    def set_hazard_state(self, state):
+        """Restore the hazard-map tab configuration from a saved dict."""
+        if not state:
+            return
+        try:
+            mode = state.get('mode', 'new')
+            if mode == 'existing':
+                self.hazard_existing_radio.setChecked(True)
+            else:
+                self.hazard_new_radio.setChecked(True)
+            self._on_hazard_mode_changed()
+
+            if state.get('cell_size'):
+                self.hazard_cell_size_spinbox.setValue(float(state['cell_size']))
+
+            crs_authid = state.get('out_crs') or ''
+            crs = QgsCoordinateReferenceSystem(crs_authid) if crs_authid else QgsCoordinateReferenceSystem()
+            if crs.isValid():
+                self.hazard_extent_group.setOutputCrs(crs)
+            ext = state.get('extent')
+            if ext and len(ext) == 4:
+                rect = QgsRectangle(ext[0], ext[1], ext[2], ext[3])
+                out_crs = crs if crs.isValid() else self.hazard_extent_group.outputCrs()
+                try:
+                    self.hazard_extent_group.setOutputExtentFromUser(rect, out_crs)
+                except Exception:
+                    pass
+
+            self.hazard_fos_file.setFilePath(state.get('fos_path', '') or '')
+            self.hazard_depth_file.setFilePath(state.get('depth_path', '') or '')
+            self.hazard_overwrite_checkbox.setChecked(bool(state.get('overwrite', False)))
+            self.hazard_auto_update_checkbox.setChecked(bool(state.get('auto_update', False)))
+            self.hazard_add_to_project_checkbox.setChecked(bool(state.get('add_to_project', True)))
+
+            for ref, combo in ((state.get('fos_layer'), self.hazard_fos_layer_combo),
+                               (state.get('depth_layer'), self.hazard_depth_layer_combo)):
+                lyr = self._resolve_hazard_layer(ref)
+                if lyr is not None:
+                    combo.setLayer(lyr)
+        except Exception:
+            pass
+
+    def _resolve_hazard_layer(self, ref):
+        """Resolve a saved {id, name} layer reference to a project layer (or None)."""
+        if not ref:
+            return None
+        try:
+            lid = ref.get('id')
+            if lid:
+                lyr = QgsProject.instance().mapLayer(lid)
+                if lyr is not None:
+                    return lyr
+            name = ref.get('name')
+            if name:
+                for lyr in QgsProject.instance().mapLayers().values():
+                    if lyr.name() == name:
+                        return lyr
+        except Exception:
+            pass
+        return None
 
     def _reload_rasters(self):
         """Popola la combo con i raster presenti nel progetto (solo layer di tipo Raster)."""

@@ -26,7 +26,7 @@ from qgis.core import (
 from qgis.gui import QgsRubberBand
 
 
-from .ui.profile_dialog import ProfileDialog, fos_to_hex
+from .ui.profile_dialog import ProfileDialog, fos_to_hex, fos_to_rgb
 from .tools.point_selection_tool import TwoPointSelectionTool
 
 # Import updated framework from external/gwf-le/src (no fallback to local copies)
@@ -113,6 +113,7 @@ class TheRaiseOfSlopesPlugin:
             self.dlg.gridStabilityAnalysisRequested.connect(self._analyze_grid_stability)
             self.dlg.simplexStabilityAnalysisRequested.connect(self._analyze_simplex_stability)
             self.dlg.clearSurfacesRequested.connect(self._clear_surfaces)
+            self.dlg.writeHazardMapRequested.connect(self._write_hazard_map)
         self.dlg.show()
         self.dlg.raise_()
 
@@ -756,6 +757,12 @@ class TheRaiseOfSlopesPlugin:
         except Exception:
             state['results'] = {'grid': '', 'simplex': ''}
 
+        # Hazard-map configuration (serialised by the dialog)
+        try:
+            state['hazard'] = self.dlg.get_hazard_state()
+        except Exception:
+            state['hazard'] = {}
+
         return state
 
     def _save_project(self, path):
@@ -1010,6 +1017,12 @@ class TheRaiseOfSlopesPlugin:
                 except Exception:
                     continue
 
+            # Hazard-map configuration (restored by the dialog)
+            try:
+                self.dlg.set_hazard_state(state.get('hazard'))
+            except Exception:
+                pass
+
             # Result texts
             try:
                 res = state.get('results', {})
@@ -1077,6 +1090,193 @@ class TheRaiseOfSlopesPlugin:
             except Exception:
                 pass
         self.surface_label_items = []
+
+    def _maybe_auto_update_hazard_map(self):
+        """Refresh the hazard rasters after an analysis if auto-update is enabled.
+
+        Wrapped defensively so a hazard-map failure never aborts the analysis.
+        """
+        try:
+            if self.dlg.hazard_auto_update_enabled():
+                self._write_hazard_map(self.dlg.get_hazard_map_params())
+        except Exception as e:
+            print(f"Hazard map auto-update skipped: {e}")
+
+    def _write_hazard_map(self, params):
+        """Accumulate the current analysis surfaces into the FoS/depth hazard rasters.
+
+        For every stored slip surface, its ground trace is mapped to geographic
+        coordinates (project CRS -> output CRS) and burned into the grid applying
+        the per-cell min-FoS rule: a cell keeps the lowest FoS seen so far and the
+        slip-surface depth associated with it.
+        """
+        from .tools.hazard_raster import HazardRasterAccumulator, GDAL_AVAILABLE
+        try:
+            if not GDAL_AVAILABLE:
+                self.dlg.setStatus("Hazard map: GDAL (osgeo) not available.")
+                return
+
+            # Preconditions: need a profile and at least one computed surface.
+            if (not self.profile_distances or not self.profile_elevations
+                    or self.profile_p1 is None or self.profile_p2 is None):
+                self.dlg.setStatus("Hazard map: compute a profile first.")
+                return
+            if not self.slip_surfaces:
+                self.dlg.setStatus("Hazard map: run a stability analysis first (no surfaces).")
+                return
+
+            mode = params.get('mode', 'new')
+            if mode == 'new':
+                dem = params.get('dem')
+                if dem is None:
+                    self.dlg.setStatus("Hazard map: select a DEM raster first.")
+                    return
+                fos_path = params.get('fos_path')
+                depth_path = params.get('depth_path')
+                if not fos_path or not depth_path:
+                    self.dlg.setStatus("Hazard map: choose output paths for both rasters.")
+                    return
+                out_crs = params.get('out_crs')
+                out_crs_obj = out_crs if (out_crs is not None and out_crs.isValid()) else dem.crs()
+                acc = HazardRasterAccumulator.from_template(
+                    params['extent'], params['cell_size'], out_crs_obj.toWkt())
+            else:
+                fos_layer = params.get('fos_layer')
+                depth_layer = params.get('depth_layer')
+                if fos_layer is None or depth_layer is None:
+                    self.dlg.setStatus("Hazard map: select both existing rasters.")
+                    return
+                fos_path = fos_layer.source()
+                depth_path = depth_layer.source()
+                acc = HazardRasterAccumulator.from_existing(fos_path, depth_path)
+                if params.get('overwrite'):
+                    acc.reset()
+                out_crs_obj = fos_layer.crs()
+
+            # Transformer project CRS -> output CRS (None when identical/invalid).
+            project_crs = QgsProject.instance().crs()
+            transformer = None
+            if project_crs.isValid() and out_crs_obj.isValid() and project_crs != out_crs_obj:
+                transformer = QgsCoordinateTransform(project_crs, out_crs_obj, QgsProject.instance())
+
+            ground = self._create_ground_surface_function(
+                self.profile_distances, self.profile_elevations)
+            p1 = self.profile_p1
+            p2 = self.profile_p2
+            extent_length = p1.distance(p2)
+            if extent_length <= 0:
+                self.dlg.setStatus("Hazard map: degenerate profile.")
+                return
+
+            n_surfaces = 0
+            for s in self.slip_surfaces:
+                xs = np.asarray(s.get('x'), dtype=float)
+                ys = np.asarray(s.get('y'), dtype=float)
+                if xs.size < 1 or xs.size != ys.size:
+                    continue
+                fos = s.get('fs')
+                # Vertical slip-surface depth below ground (clip extrapolation artefacts).
+                depths = np.clip(np.asarray(ground(xs), dtype=float) - ys, 0.0, None)
+
+                # Distance along profile -> geographic point (project CRS) -> output CRS.
+                geo_x = np.empty(xs.size, dtype=float)
+                geo_y = np.empty(xs.size, dtype=float)
+                for i, xv in enumerate(xs):
+                    t = xv / extent_length
+                    gx = p1.x() + (p2.x() - p1.x()) * t
+                    gy = p1.y() + (p2.y() - p1.y()) * t
+                    if transformer is not None:
+                        try:
+                            pt = transformer.transform(QgsPointXY(gx, gy))
+                            gx, gy = pt.x(), pt.y()
+                        except Exception:
+                            gx = gy = float('nan')
+                    geo_x[i] = gx
+                    geo_y[i] = gy
+
+                acc.accumulate_segment(geo_x, geo_y, fos, depths)
+                n_surfaces += 1
+
+            acc.save(fos_path, depth_path)
+
+            if params.get('add_to_project'):
+                valid = acc.fos[acc.fos != acc.NODATA]
+                if valid.size:
+                    new_fos, new_depth = self._load_hazard_rasters(
+                        fos_path, depth_path, float(valid.min()), float(valid.max()))
+                else:
+                    new_fos, new_depth = self._load_hazard_rasters(
+                        fos_path, depth_path, 0.0, 1.0)
+                # Restore combo-box selection to the newly loaded layers so that
+                # subsequent runs in "existing" mode still find the right layers.
+                try:
+                    self.dlg.set_hazard_layer_combos(new_fos, new_depth)
+                except Exception:
+                    pass
+
+            self.dlg.setStatus(
+                f"Hazard map updated: {n_surfaces} surface(s) -> "
+                f"{os.path.basename(fos_path)}, {os.path.basename(depth_path)}")
+        except Exception as e:
+            import traceback
+            self.dlg.setStatus(f"Hazard map error: {e}")
+            print(traceback.format_exc())
+
+    def _load_hazard_rasters(self, fos_path, depth_path, fs_min, fs_max):
+        """(Re)load the two hazard rasters into the project, styling the FoS one.
+
+        Returns (fos_layer, depth_layer) — the newly added layer objects, or None
+        for each one that failed to load.  The caller should update any combo-boxes
+        that may still hold references to the now-removed previous layers.
+        """
+        from qgis.core import QgsRasterLayer
+        # Refresh any layers already pointing at these files (avoid stale cache).
+        for path in (fos_path, depth_path):
+            for lyr in list(QgsProject.instance().mapLayers().values()):
+                try:
+                    if os.path.normpath(lyr.source()) == os.path.normpath(path):
+                        QgsProject.instance().removeMapLayer(lyr.id())
+                except Exception:
+                    continue
+
+        added_depth = None
+        depth_layer = QgsRasterLayer(depth_path, "Hazard - Slip depth")
+        if depth_layer.isValid():
+            QgsProject.instance().addMapLayer(depth_layer)
+            added_depth = depth_layer
+
+        added_fos = None
+        fos_layer = QgsRasterLayer(fos_path, "Hazard - Min FoS")
+        if fos_layer.isValid():
+            try:
+                self._apply_fos_style(fos_layer, fs_min, fs_max)
+            except Exception as e:
+                print(f"Hazard map: could not style FoS raster: {e}")
+            QgsProject.instance().addMapLayer(fos_layer)
+            added_fos = fos_layer
+
+        return added_fos, added_depth
+
+    def _apply_fos_style(self, layer, fs_min, fs_max):
+        """Apply the RdYlGn Factor-of-Safety pseudocolor ramp used by the graph."""
+        from qgis.core import (QgsColorRampShader, QgsRasterShader,
+                               QgsSingleBandPseudoColorRenderer)
+        if fs_max <= fs_min:
+            fs_max = fs_min + 1.0
+        ramp = QgsColorRampShader(fs_min, fs_max)
+        ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        items = []
+        for k in range(5):
+            t = k / 4.0
+            value = fs_min + t * (fs_max - fs_min)
+            r, g, b = fos_to_rgb(t)
+            items.append(QgsColorRampShader.ColorRampItem(
+                value, QColor(r, g, b), f"{value:.3f}"))
+        ramp.setColorRampItemList(items)
+        shader = QgsRasterShader()
+        shader.setRasterShaderFunction(ramp)
+        renderer = QgsSingleBandPseudoColorRenderer(layer.dataProvider(), 1, shader)
+        layer.setRenderer(renderer)
 
     def _sample_with_bilinear(self, provider, pt, band, no_data, raster_layer):
         """Sample with bilinear fallback."""
@@ -1440,7 +1640,8 @@ class TheRaiseOfSlopesPlugin:
 
             # Update the graph with all available surfaces
             self._update_profile_with_all_surfaces()
-            
+            self._maybe_auto_update_hazard_map()
+
             # Prepare output
             eta_str = f"{eta_deg:.2f}°" if isinstance(eta_deg, (int, float)) else str(eta_deg)
             
@@ -1764,6 +1965,7 @@ Total surfaces analyzed: {len(all_results)}
                         continue
                 print(f"Surfaces displayed: {stored} (requested {n_show})")
                 self._update_profile_with_all_surfaces()
+                self._maybe_auto_update_hazard_map()
             else:
                 print("⚠️ Parametri geometrici non disponibili")
                 x_in = x_out = eta_deg = "N/A"
