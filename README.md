@@ -1,88 +1,103 @@
-# The Raise Of Slopes - Plugin QGIS
+# The Raise Of Slopes – QGIS Plugin
 
-Plugin QGIS per analisi di stabilità dei versanti con metodi di equilibrio limite (Bishop, Morgenstern-Price, Spencer).
+A QGIS plugin for slope stability analysis using limit equilibrium methods (Bishop, Morgenstern-Price, Spencer).
 
-## Funzionalità
+## Features
 
-### Profilo altimetrico
-- Selezione di due punti su DEM
-- Campionamento profilo con gestione CRS e nodata
-- Visualizzazione grafica e export CSV / immagine / DXF
+### Elevation Profile
+- Select two points on a DEM
+- Profile sampling with CRS and nodata handling
+- Graphical display and export to CSV / image / DXF
 
-### Analisi di stabilità
-- Ricerca a griglia e ottimizzazione simplex
-- Parametri geotecnici per 1 o 2 strati
-- Falda opzionale (profondità costante, raster o quota assoluta)
-- Salvataggio/caricamento progetto `.rslope`
+### Stability Analysis
+- Grid search and simplex optimisation
+- Geotechnical parameters for 1 or 2 soil layers
+- Optional water table (constant depth, raster, or absolute elevation)
+- Project save/load (`.rslope` format)
 
-## Architettura corrente
+### Hazard Map
+- Factor of Safety (FoS) raster accumulation across the slope
+- Depth raster styling for visualisation
 
-Il plugin usa esclusivamente il framework esterno:
+### Profile Report
+- Legend and table of geotechnical parameters
+- Export-ready graphical output
+
+## Architecture
+
+The plugin relies exclusively on the external framework:
 
 `external/gwf-le/src/LEM`
 
-e i moduli di ricerca delle superfici critiche in:
+and the critical surface search modules in:
 
 `external/gwf-le/src/searchCriticalF`
 
-Non sono più presenti fallback o copie locali dei moduli LE.
+No local fallbacks or copies of the LE modules are present.
 
-## Installazione plugin (sviluppo)
+## Installation (development)
 
-1. Clona anche il submodule `external/gwf-le`.
-2. Copia la cartella del plugin nella directory plugin QGIS o usa lo script di installazione fornito.
+1. Clone the repository including the `external/gwf-le` submodule.
+2. Copy the plugin folder to the QGIS plugins directory or use the provided install script.
 
-Esempio macOS, copia manuale:
+macOS example – manual copy:
 
 ```bash
-cp -r /percorso/RaiseOfSlope ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/TheRaiseOfSlopes
+cp -r /path/to/RaiseOfSlope ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/TheRaiseOfSlopes
 ```
 
-Oppure, dalla directory principale del plugin:
+Or, from the plugin root:
 
 ```bash
-python install_plugin.py            # copia nella directory predefinita
+python install_plugin.py            # copy to default directory
 python install_plugin.py --dest /path/to/plugins
-python install_plugin.py --zip      # genera TheRaiseOfSlopes.zip
+python install_plugin.py --zip      # generate TheRaiseOfSlopes.zip
 ```
-Poi abilita il plugin in QGIS da `Plugin > Gestisci e Installa Plugin`.
 
-## Utilizzo rapido
+Then enable the plugin in QGIS via `Plugins > Manage and Install Plugins`.
 
-1. Carica un DEM.
-2. Apri il plugin e seleziona due punti.
-3. Il profilo viene calcolato automaticamente.
-4. Esegui analisi in `Grid Analysis` o `Simplex Analysis`.
+## Quick Start
 
-## Dipendenze
+1. Load a DEM layer.
+2. Open the plugin and select two points on the map.
+3. The elevation profile is computed automatically.
+4. Run the analysis from `Grid Analysis` or `Simplex Analysis`.
+
+## Dependencies
 
 - QGIS 3.x
-- NumPy, SciPy, Matplotlib (ambiente QGIS)
-- Moduli LE in `external/gwf-le/src/LEM` e `external/gwf-le/src/searchCriticalF`
+- NumPy, SciPy, Matplotlib (QGIS Python environment)
+- LE modules in `external/gwf-le/src/LEM` and `external/gwf-le/src/searchCriticalF`
 
 ## Troubleshooting
 
-### Errore import moduli LE
+### LE module import error
 
-Verifica che esista:
+Verify that the following directories exist and contain the expected modules (`lemInterface.py`, `gleMethods.py`, `searchInterface.py`, `circularSlipSurfaces.py`):
 
-`external/gwf-le/src/LEM`
+- `external/gwf-le/src/LEM`
+- `external/gwf-le/src/searchCriticalF`
 
-e che esista anche:
+### Analysis does not start
 
-`external/gwf-le/src/searchCriticalF`
+- Confirm the elevation profile has been computed
+- Check bounds and geotechnical parameter values
+- Read the QGIS Python console for detailed error output
 
-con i moduli usati dal plugin (`lemInterface.py`, `gleMethods.py`, `searchInterface.py`, `circularSlipSurfaces.py`).
+## Key Files
 
-### Analisi non parte
+| File | Purpose |
+|------|---------|
+| `the_raise_of_slopes_plugin.py` | Main plugin logic |
+| `ui/profile_dialog.py` | User interface |
+| `debug_stability_standalone.py` | Standalone debug outside QGIS |
+| `INTEGRATION_NOTES.md` | Technical integration notes |
 
-- Verifica che il profilo sia stato calcolato
-- Controlla bounds e parametri geotecnici
-- Leggi la console Python di QGIS per dettagli errore
+## Citation
 
-## File utili
+If you use this plugin in your research, please cite the following article on which the stability algorithm is based:
 
-- `the_raise_of_slopes_plugin.py` logica plugin
-- `ui/profile_dialog.py` interfaccia
-- `debug_stability_standalone.py` debug fuori QGIS
-- `INTEGRATION_NOTES.md` note tecniche
+> Lalicata, L. M., Bressan, A., Pittaluga, S., Tamellini, L., & Gallipoli, D. (2025).
+> **An Efficient Slope Stability Algorithm with Physically Consistent Parametrisation of Slip Surfaces.**
+> *International Journal of Civil Engineering*, 23, 671–682.
+> https://doi.org/10.1007/s40999-024-01053-1
