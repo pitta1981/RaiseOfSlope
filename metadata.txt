@@ -1,15 +1,17 @@
 [general]
-name=TheRaiseOfSlopes
+name=RaiseOfSlopes
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
-description=Analisi profilo DEM e stabilità versanti con metodi LE (Bishop, Morgenstern-Price, Spencer)
-version=0.1.0
-author=Autore
-email=you@example.com
-about=Plugin QGIS per calcolo profilo da DEM, analisi di stabilità dei versanti (grid/simplex), gestione stratigrafia/falda ed export risultati.
+description=DEM profile analysis and slope stability with limit equilibrium methods (Bishop, Morgenstern-Price, Spencer)
+version=0.9.0
+author=S.Pittaluga, L.M. Lalicata, A. Bressan, L. Tamellini
+email=simone.pittaluga@cnr.it
+about=QGIS plugin for DEM profile extraction, slope stability analysis (grid/simplex), stratigraphy and groundwater handling, and results export.
 category=Analysis
 icon=icon.svg
 experimental=True
 deprecated=False
-tags=profile,slope,stability,landslide,section,geotecnica
-homepage=
+tags=limit equilibrium,slope,stability,landslide,section,geotechnics,Bishop,Morgenstern-Price,Spencer,DEM,profile,analysis   
+homepage=https://github.com/pitta1981/RaiseOfSlope
+repository=https://github.com/pitta1981/RaiseOfSlope
+issues=https://github.com/pitta1981/RaiseOfSlope/issues
