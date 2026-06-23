@@ -30,12 +30,14 @@ SOURCE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 EXCLUDED_DIR_PREFIXES = {
     ".git",
+    ".vscode",
     "__pycache__",
     "qgis_plugin",
 }
 
 EXCLUDED_FILE_NAMES = {
     ".DS_Store",
+    ".git",
     ".gitignore",
     ".gitmodules",
 }
@@ -49,6 +51,9 @@ def _is_excluded_dir(rel_dir: str) -> bool:
     rel = _normalize_rel_path(rel_dir).strip("/")
     if not rel:
         return False
+    parts = rel.split("/")
+    if any(part in EXCLUDED_DIR_PREFIXES for part in parts):
+        return True
     return any(rel == prefix or rel.startswith(prefix + "/") for prefix in EXCLUDED_DIR_PREFIXES)
 
 
@@ -56,6 +61,9 @@ def _is_excluded_file(rel_file: str, filename: str) -> bool:
     if filename in EXCLUDED_FILE_NAMES or filename.endswith((".pyc", ".pyo", ".zip")):
         return True
     rel = _normalize_rel_path(rel_file).strip("/")
+    parts = rel.split("/")
+    if any(part in EXCLUDED_FILE_NAMES or part in EXCLUDED_DIR_PREFIXES for part in parts):
+        return True
     return any(rel == prefix or rel.startswith(prefix + "/") for prefix in EXCLUDED_DIR_PREFIXES)
 
 
