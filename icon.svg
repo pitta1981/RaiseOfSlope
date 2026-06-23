@@ -1,30 +1,42 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#87CEEB"/>
-      <stop offset="100%" stop-color="#E0F7FA"/>
+    <linearGradient id="stableEarth" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C4722A"/>
+      <stop offset="100%" stop-color="#7A4419"/>
     </linearGradient>
+    <linearGradient id="slidingMass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E8A455"/>
+      <stop offset="100%" stop-color="#CB7D2F"/>
+    </linearGradient>
+    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C8E6F5"/>
+      <stop offset="100%" stop-color="#EAF4FB"/>
+    </linearGradient>
+    <clipPath id="roundRect">
+      <rect width="128" height="128" rx="18" ry="18"/>
+    </clipPath>
   </defs>
-  <rect width="128" height="128" fill="url(#sky)"/>
 
-  <!-- Slope -->
-  <polygon points="10,110 90,50 118,50 118,118 10,118" fill="#8E8B7B" stroke="#5A5A4E" stroke-width="2"/>
+  <!-- Rounded background (sky) -->
+  <rect width="128" height="128" fill="url(#skyGrad)" rx="18" ry="18"/>
 
-  <!-- Sliding mass -->
-  <path d="M 70 62 C 70 52, 58 50, 52 60 C 46 70, 60 78, 68 72 C 76 66, 74 60, 70 62 Z" fill="#B71C1C" stroke="#880E0E" stroke-width="2"/>
-  <path d="M 72 66 C 72 56, 60 54, 54 64 C 48 74, 62 82, 70 76 C 78 70, 76 64, 72 66 Z" fill="#FFCDD2" opacity="0.8"/>
+  <!-- Stable earth mass: below the failure arc, from left edge to bottom-right -->
+  <!-- Path goes: bottom-left → toe of slope → follow failure arc to crest → down-right → bottom → close -->
+  <path d="M 6,122 L 6,66 C 26,90 86,86 122,20 L 122,122 Z"
+        fill="url(#stableEarth)" clip-path="url(#roundRect)"/>
 
-  <!-- Rock debris -->
-  <circle cx="95" cy="80" r="4" fill="#4E342E"/>
-  <circle cx="105" cy="92" r="3" fill="#4E342E"/>
-  <circle cx="88" cy="95" r="3" fill="#4E342E"/>
+  <!-- Sliding mass: lighter wedge between slope surface line and failure arc -->
+  <!-- Goes from toe along slope line to crest, then back along arc to toe -->
+  <path d="M 6,66 L 122,20 C 86,86 26,90 6,66 Z"
+        fill="url(#slidingMass)" clip-path="url(#roundRect)"/>
 
-  <!-- Arrow showing movement -->
-  <path d="M 74 68 L 90 84" stroke="#000" stroke-width="3" marker-end="url(#arrow)"/>
-  <defs>
-    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L6,3 L0,6 Z" fill="#000"/>
-    </marker>
-  </defs>
+  <!-- Slope surface border (ground profile) -->
+  <line x1="6" y1="66" x2="122" y2="20" stroke="#3E2008" stroke-width="2"
+        clip-path="url(#roundRect)"/>
+
+  <!-- Failure surface arc — the key visual (red circular slip surface) -->
+  <path d="M 6,66 C 26,90 86,86 122,20"
+        fill="none" stroke="#D32F2F" stroke-width="5.5"
+        stroke-linecap="round" clip-path="url(#roundRect)"/>
 </svg>
