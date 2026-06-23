@@ -4,7 +4,7 @@ from qgis.PyQt.QtGui import QPainter, QColor, QPen, QPolygonF, QImage, QFont
 from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QLabel, QComboBox, QFileDialog, QTabWidget,
                                  QWidget, QFormLayout, QDoubleSpinBox, QSpinBox,
-                                 QGroupBox, QTextEdit, QListWidget, QListWidgetItem,
+                                 QGroupBox, QTextEdit, QTextBrowser, QListWidget, QListWidgetItem,
                                  QCheckBox, QRadioButton, QButtonGroup, QToolButton, QMenu, QAction,
                                  QSizePolicy, QScrollArea,
                                  QTableWidget, QTableWidgetItem, QHeaderView)
@@ -437,6 +437,60 @@ class ProfileDialog(QDialog):
             pass
         self._sync_hazard_dem()
 
+    def _create_help_tab(self):
+        """Create the Help tab with a language selector and an HTML browser."""
+        import os
+        help_widget = QWidget()
+        layout = QVBoxLayout(help_widget)
+
+        # Language selector row
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel("Language:"))
+        self._help_lang_combo = QComboBox()
+        self._help_lang_combo.addItem("English", "en")
+        self._help_lang_combo.addItem("Italiano", "it")
+        lang_row.addWidget(self._help_lang_combo)
+        lang_row.addStretch()
+        layout.addLayout(lang_row)
+
+        # HTML browser (always available — no extra Qt modules needed)
+        self._help_browser = QTextBrowser()
+        self._help_browser.setOpenExternalLinks(True)
+        layout.addWidget(self._help_browser)
+
+        # Detect QGIS locale and pre-select the matching language
+        try:
+            locale = QSettings().value("locale/userLocale", "en_US") or "en"
+            lang_code = str(locale)[:2].lower()
+        except Exception:
+            lang_code = "en"
+
+        idx = self._help_lang_combo.findData(lang_code)
+        if idx >= 0:
+            self._help_lang_combo.setCurrentIndex(idx)
+
+        self._help_lang_combo.currentIndexChanged.connect(self._on_help_lang_changed)
+        self._load_help(lang_code)
+
+        self.tab_widget.addTab(help_widget, "Help")
+
+    def _load_help(self, lang_code):
+        """Load the help HTML for *lang_code*, falling back to English."""
+        import os
+        plugin_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.join(plugin_dir, "help", f"{lang_code}.html")
+        if not os.path.isfile(path):
+            path = os.path.join(plugin_dir, "help", "en.html")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                self._help_browser.setHtml(fh.read())
+        except Exception as e:
+            self._help_browser.setHtml(f"<p>Help file not available: {e}</p>")
+
+    def _on_help_lang_changed(self):
+        lang_code = self._help_lang_combo.currentData()
+        self._load_help(lang_code)
+
     def _wrap_in_scroll(self, widget):
         """Wraps a widget in a QScrollArea for use as a tab page."""
         scroll = QScrollArea()
@@ -472,6 +526,9 @@ class ProfileDialog(QDialog):
 
         # Sesta scheda (opzionale): Mappa di pericolosità (raster FoS / profondità)
         self._create_hazard_map_tab()
+
+        # Settima scheda: Guida
+        self._create_help_tab()
 
         # Widget calcolo FOS sempre visibile (sotto le tab)
         fos_group = QGroupBox("Factor of Safety Calculation")

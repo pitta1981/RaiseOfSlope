@@ -791,7 +791,7 @@ class TheRaiseOfSlopesPlugin:
                 try:
                     state = json.loads(cleaned)
                     cleaned_flag = True
-                    print("Warning: JSON pulito sostituendo NaN/Infinity con null durante il caricamento del progetto.")
+                    print("Warning: NaN/Infinity replaced with null while loading project.")
                 except Exception:
                     raise
 
@@ -1058,14 +1058,14 @@ class TheRaiseOfSlopesPlugin:
                 pass
             try:
                 if 'cleaned_flag' in locals() and cleaned_flag:
-                    self.dlg.setStatus(f"Progetto caricato: {path} (attenzione: NaN/Infinity sostituiti con null)")
+                    self.dlg.setStatus(f"Project loaded: {path} (warning: NaN/Infinity replaced with null)")
                 else:
-                    self.dlg.setStatus(f"Progetto caricato: {path}")
+                    self.dlg.setStatus(f"Project loaded: {path}")
             except Exception:
-                self.dlg.setStatus(f"Progetto caricato: {path}")
+                self.dlg.setStatus(f"Project loaded: {path}")
         except Exception as e:
             import traceback
-            self.dlg.setStatus(f"Errore caricamento progetto: {e}")
+            self.dlg.setStatus(f"Error loading project: {e}")
             print(traceback.format_exc())
     def _clear_surfaces(self):
         """Clear all drawn surfaces and update the graph."""
@@ -1519,24 +1519,7 @@ class TheRaiseOfSlopesPlugin:
             in_range = (min(in_interval_min, in_interval_max), max(in_interval_min, in_interval_max))
             out_range = (min(out_interval_min, out_interval_max), max(out_interval_min, out_interval_max))
 
-            # Warn when ranges overlap (would produce backward surfaces with negative FoS)
-            if in_range[0] < out_range[1]:
-                grid_overlap_warning = (
-                    "⚠️ ATTENZIONE: i range In e Out si sovrappongono "
-                    f"(in_min={in_range[0]:.1f} < out_max={out_range[1]:.1f}).\n"
-                    "Le superfici degeneri (ingresso ≈ uscita o superficie sopra il "
-                    "terreno) verranno scartate automaticamente; entrambe le direzioni "
-                    "di pendio sono gestite.\n"
-                    "Per ridurre il numero di superfici degeneri limita la "
-                    "sovrapposizione tra gli intervalli In e Out.\n\n"
-                )
-                print(grid_overlap_warning)
-            else:
-                grid_overlap_warning = ""
 
-            print(f"Search ranges: in={in_range}, out={out_range}")
-            print(f"Grid: in=[{in_interval_min:.1f}, {in_interval_max:.1f}], out=[{out_interval_min:.1f}, {out_interval_max:.1f}]")
-            print(f"Grid points: in={params['num_in_pts']}, out={params['num_out_pts']}, min_eta={params['min_eta_inc']}°")
 
             # Normalise the slope orientation to the solver's canonical frame.
             # The LEM/GLE math is only consistent for slopes descending toward
@@ -1587,7 +1570,6 @@ class TheRaiseOfSlopesPlugin:
             # Run calculation
             self.dlg.setStatus("Calculation in progress... (grid of circles)")
 
-            print("Calling searchInterface.find_critical...")
             geometries = domain.sample_grid(grid_options)
             # Keep only physically meaningful surfaces. This is orientation-independent:
             # it works whether the slope descends toward lower or higher x, and removes
@@ -1600,36 +1582,31 @@ class TheRaiseOfSlopesPlugin:
                 print(f"  Discarded {n_filtered} degenerate geometries; {len(geometries)} remain.")
             if not geometries:
                 raise ValueError(
-                    "Nessuna geometria valida dopo il filtraggio.\n"
-                    "Le superfici generate sono degeneri (ingresso e uscita troppo vicini "
-                    "o superficie sopra il terreno). Riduci la sovrapposizione tra gli "
-                    "intervalli In e Out, oppure allarga il dominio di ricerca."
+                    "No valid geometry after filtering.\n"
+                    "Generated surfaces are degenerate (entry and exit too close "
+                    "or surface above ground). Reduce the overlap between In and Out "
+                    "intervals, or widen the search domain."
                 )
             results, computation_time = find_critical(method, geometries, num_geometries=len(geometries))
 
-            print(f"\nCalcolo completato in {computation_time:.2f} secondi")
+            print(f"Computation completed in {computation_time:.2f} s")
 
             if results is None or len(results) == 0:
-                raise ValueError("Nessuna superficie di scivolamento valida trovata")
+                raise ValueError("No valid slip surface found.")
 
             # Drop surfaces the guard flagged as non-physical (FoS pushed to +inf).
             results = [r for r in results if np.isfinite(r[1].factor_of_safety)]
             if not results:
                 raise ValueError(
-                    "Nessuna superficie con fattore di sicurezza fisicamente valido.\n"
-                    "Tutte le superfici candidate erano degeneri o producevano un FoS non fisico.\n"
-                    "Verifica gli intervalli di ricerca In/Out e i parametri del terreno."
+                    "No surface with a physically valid factor of safety.\n"
+                    "All candidate surfaces were degenerate or produced a non-physical FoS.\n"
+                    "Check the In/Out search intervals and the soil parameters."
                 )
 
             all_results = results
-            print(f"Superfici analizzate: {len(all_results)}")
-            
-            # Trova il risultato critico (FS minimo)
             critical_geometry, critical_result = all_results[0]
             factor_of_safety = critical_result.factor_of_safety
-            
-            print(f"\nRISULTATO CRITICO:")
-            print(f"Fattore di Sicurezza (FS): {factor_of_safety:.4f}")
+            print(f"Critical FS: {factor_of_safety:.4f}  (surfaces evaluated: {len(all_results)})")
 
             # Geometria superficie critica (computed in the canonical frame,
             # then mapped back to the real profile coordinates for display).
@@ -1646,14 +1623,6 @@ class TheRaiseOfSlopesPlugin:
 
             eta_deg = float(np.degrees(critical_geometry.eta)) if hasattr(critical_geometry, 'eta') else "N/A"
 
-            print(f"\nGEOMETRIA SUPERFICIE CRITICA:")
-            print(f"Punto ingresso (x_in): {x_in:.2f} m, quota: {y_in:.2f} m")
-            print(f"Punto uscita (x_out): {x_out:.2f} m, quota: {y_out:.2f} m")
-            print(f"Lunghezza superficie: {surface_length:.2f} m")
-            if isinstance(eta_deg, (int, float)):
-                print(f"Angolo eta: {eta_deg:.2f}°")
-            else:
-                print(f"Angolo eta: {eta_deg}")
 
             # Store the requested number of surfaces (ordered by FoS; #1 is critical).
             # all_results is sorted by ascending factor_of_safety.
@@ -1682,7 +1651,7 @@ class TheRaiseOfSlopesPlugin:
             # Stratigraphy info for output
             strat_info = self._format_stratigraphy_info(params)
             
-            results_text = grid_overlap_warning + f"""STABILITY ANALYSIS - {method_label.upper()} (GRID)
+            results_text = f"""STABILITY ANALYSIS - {method_label.upper()} (GRID)
 
 Parameters used:
 - Unit weight (γ): {params['gamma']:.1f} kN/m³
@@ -1778,7 +1747,7 @@ Total surfaces analyzed: {len(all_results)}
                     ti_val = float(np.asarray(test_interface_y).item())
                     tg_val = float(np.asarray(test_ground_y).item())
                     thickness = tg_val - ti_val
-                    print(f"  Test punto x={test_x:.1f}: terreno={tg_val:.1f}m, interfaccia={ti_val:.1f}m, spessore={thickness:.1f}m")
+                    print(f"  Test point x={test_x:.1f}: ground={tg_val:.1f}m, interface={ti_val:.1f}m, thickness={thickness:.1f}m")
                 except Exception:
                     # Fallback: print arrays/repr without numeric formatting
                     ti_arr = np.asarray(test_interface_y)
@@ -1823,20 +1792,6 @@ Total surfaces analyzed: {len(all_results)}
             in_range = (float(x_in_min), float(x_in_max))
             out_range = (float(x_out_min), float(x_out_max))
 
-            # Warn when ranges overlap: the optimizer could generate backward surfaces.
-            if x_in_min < x_out_max:
-                overlap_warning = (
-                    "⚠️ ATTENZIONE: i range x_in e x_out si sovrappongono "
-                    f"(x_in_min={x_in_min:.1f} < x_out_max={x_out_max:.1f}).\n"
-                    "Le superfici degeneri (ingresso ≈ uscita o superficie sopra il "
-                    "terreno) verranno scartate automaticamente; entrambe le direzioni "
-                    "di pendio sono gestite.\n"
-                    "Per ridurre il numero di superfici degeneri limita la "
-                    "sovrapposizione tra gli intervalli x_in e x_out.\n\n"
-                )
-                print(overlap_warning)
-            else:
-                overlap_warning = ""
 
             simplex_grid_pts = 24
             grid_options = {
@@ -1845,16 +1800,6 @@ Total surfaces analyzed: {len(all_results)}
                 'min_eta_inc': np.radians(10.0),
             }
 
-            print(f"Search ranges: in={in_range}, out={out_range}")
-            print(f"Bounds simplex:")
-            print(f"  x_in: [{x_in_min:.1f}, {x_in_max:.1f}] m (interval: {x_in_max-x_in_min:.1f} m)")
-            print(f"  x_out: [{x_out_min:.1f}, {x_out_max:.1f}] m (interval: {x_out_max-x_out_min:.1f} m)")
-            print(f"  η: [{eta_min:.1f}, {eta_max:.1f}]°")
-            print(f"Initial simplex grid:")
-            print(f"  num_in_pts: {simplex_grid_pts}")
-            print(f"  num_out_pts: {simplex_grid_pts}")
-            print(f"  min_eta_inc: 10.0° (increment for initial grid)")
-            print(f"  Total combinations: {simplex_grid_pts * simplex_grid_pts} pairs (in,out)")
 
             # Normalise the slope orientation to the solver's canonical frame
             # (descending toward lower x). Mirror the spatial functions and the
@@ -1899,7 +1844,6 @@ Total surfaces analyzed: {len(all_results)}
             # Run calculation
             self.dlg.setStatus("Calculation in progress... (simplex optimization)")
 
-            print("Calling searchInterface.simplex...")
             initial_geometries = domain.sample_grid(grid_options)
             # Keep only physically meaningful surfaces as simplex seeds. Orientation-
             # independent: works for slopes descending toward either side and removes
@@ -1912,10 +1856,10 @@ Total surfaces analyzed: {len(all_results)}
                 print(f"  Discarded {n_filtered} degenerate geometries; {len(initial_geometries)} remain.")
             if not initial_geometries:
                 raise ValueError(
-                    "Nessuna geometria iniziale valida dopo il filtraggio.\n"
-                    "Le superfici generate sono degeneri (ingresso e uscita troppo vicini "
-                    "o superficie sopra il terreno). Riduci la sovrapposizione tra gli "
-                    "intervalli x_in e x_out, oppure allarga il dominio di ricerca."
+                    "No valid initial geometry after filtering.\n"
+                    "Generated surfaces are degenerate (entry and exit too close "
+                    "or surface above ground). Reduce the overlap between x_in and x_out "
+                    "intervals, or widen the search domain."
                 )
             # Number of surfaces requested for display; seed at least that many
             # starting geometries so the optimiser can return distinct surfaces.
@@ -1930,7 +1874,7 @@ Total surfaces analyzed: {len(all_results)}
                 'maxiter': int(params.get('max_iterations', 300)),
                 'return_all': True,
             }
-            optimized, simplex_time, calls = simplex(
+            optimized, simplex_time, _ = simplex(
                 domain=domain,
                 method=method,
                 initialGeometries=simplex_start_geo,
@@ -1939,23 +1883,20 @@ Total surfaces analyzed: {len(all_results)}
             )
             computation_time = grid_time + simplex_time
 
-            print(f"\nCalcolo completato in {computation_time:.2f} secondi")
-            
+            print(f"Computation completed in {computation_time:.2f} s")
+
             if not optimized:
-                raise ValueError("Nessuna superficie di scivolamento valida trovata")
+                raise ValueError("No valid slip surface found.")
 
             best_geometry, best_result = optimized[0]
             factor_of_safety = float(best_result.factor_of_safety)
             if not np.isfinite(factor_of_safety):
                 raise ValueError(
-                    "L'ottimizzazione non ha trovato una superficie fisicamente valida.\n"
-                    "Le superfici candidate erano degeneri o producevano un FoS non fisico.\n"
-                    "Verifica gli intervalli x_in/x_out e i parametri del terreno."
+                    "The optimizer did not find a physically valid surface.\n"
+                    "Candidate surfaces were degenerate or produced a non-physical FoS.\n"
+                    "Check the x_in/x_out intervals and the soil parameters."
                 )
-            
-            print(f"\nRISULTATO CRITICO:")
-            print(f"Fattore di Sicurezza (FS): {factor_of_safety:.4f}")
-            print(f"   Numero chiamate metodo: {calls + len(initial_geometries)}")
+            print(f"Critical FS: {factor_of_safety:.4f}")
 
             # Informazioni superficie critica (mapped back from the canonical frame)
             if hasattr(best_geometry, 'in_pt') and hasattr(best_geometry, 'out_pt'):
@@ -1965,15 +1906,6 @@ Total surfaces analyzed: {len(all_results)}
                 x_in = float(back_x(u_in))
                 x_out = float(back_x(u_out))
                 eta_deg = float(np.degrees(best_geometry.eta)) if hasattr(best_geometry, 'eta') else "N/A"
-
-                print(f"\nGEOMETRIA SUPERFICIE CRITICA:")
-                print(f"Punto ingresso (x_in): {x_in:.2f} m")
-                print(f"Punto uscita (x_out): {x_out:.2f} m")
-                print(f"Lunghezza superficie: {surface_length:.2f} m")
-                if isinstance(eta_deg, (int, float)):
-                    print(f"Angolo eta: {eta_deg:.2f}°")
-                else:
-                    print(f"Angolo eta: {eta_deg}")
 
                 # Store the requested number of optimised surfaces (ordered by FoS,
                 # deduplicated since several seeds may converge to the same minimum).
@@ -1995,13 +1927,13 @@ Total surfaces analyzed: {len(all_results)}
                         self._store_surface('simplex', method_label, slip_x, slip_y, fos_i)
                         stored += 1
                     except Exception as e:
-                        print(f"⚠️ Errore nel campionamento di una superficie (Simplex): {e}")
+                        print(f"⚠️ Could not sample slip surface (Simplex): {e}")
                         continue
                 print(f"Surfaces displayed: {stored} (requested {n_show})")
                 self._update_profile_with_all_surfaces()
                 self._maybe_auto_update_hazard_map()
             else:
-                print("⚠️ Parametri geometrici non disponibili")
+                print("⚠️ Geometric parameters not available")
                 x_in = x_out = eta_deg = "N/A"
                 self._update_profile_with_all_surfaces()
                 self.dlg.updateProfile(self.profile_distances, self.profile_elevations)
@@ -2026,7 +1958,7 @@ Total surfaces analyzed: {len(all_results)}
             # Info stratigrafia per output
             strat_info = self._format_stratigraphy_info(params)
             
-            results_text = overlap_warning + f"""STABILITY ANALYSIS - {method_label.upper()} (SIMPLEX)
+            results_text = f"""STABILITY ANALYSIS - {method_label.upper()} (SIMPLEX)
 
 Parameters used:
 - Unit weight (γ): {float(params['gamma']):.1f} kN/m³
@@ -2083,7 +2015,7 @@ Optimization:
         """Crea una funzione lineare a tratti per la superficie del terreno."""
         valid_points = [(d, e) for d, e in zip(distances, elevations) if e is not None]
         if len(valid_points) < 2:
-            raise ValueError("Dati insufficienti per creare la funzione del terreno")
+            raise ValueError("Insufficient data to build the ground surface function")
 
         valid_distances, valid_elevations = zip(*valid_points)
         x_data = np.asarray(valid_distances, dtype=float)

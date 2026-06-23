@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<style>
+  body  { font-family: Arial, sans-serif; font-size: 13px; margin: 18px 20px; color: #222; line-height: 1.5; }
+  h1   { color: #2a6496; font-size: 17px; border-bottom: 2px solid #2a6496; padding-bottom: 5px; margin-top: 0; }
+  h2   { color: #2a6496; font-size: 14px; margin-top: 22px; border-left: 4px solid #2a6496; padding-left: 8px; }
+  h3   { color: #555; font-size: 13px; margin-top: 14px; margin-bottom: 4px; }
+  p    { margin: 5px 0; }
+  ul, ol { margin: 4px 0 8px 22px; padding: 0; }
+  li   { margin: 3px 0; }
+  code { background: #f0f0f0; padding: 1px 5px; border-radius: 2px; font-family: monospace; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 12px 0; }
+  th   { background: #2a6496; color: #fff; padding: 5px 8px; text-align: left; font-size: 12px; }
+  td   { padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f7f7; }
+  .tip  { background: #e8f4fd; border-left: 4px solid #3498db; padding: 7px 11px; margin: 10px 0; }
+  .warn { background: #fef9e7; border-left: 4px solid #f39c12; padding: 7px 11px; margin: 10px 0; }
+  .section-label { font-weight: bold; color: #2a6496; }
+</style>
+</head>
+<body>
+
+<h1>Raise of Slopes &mdash; Guida utente</h1>
+
+<p>Questo plugin per QGIS esegue l'<strong>analisi di stabilità dei versanti</strong> con il Metodo dell'Equilibrio Limite (MEL) su superfici di scivolamento circolari. A partire da un DEM estrae un profilo altimetrico, modella la stratigrafia e la falda, e cerca la superficie critica che minimizza il Fattore di Sicurezza (FS) tramite una griglia di ricerca esaustiva oppure un ottimizzatore simplex di Nelder&ndash;Mead.</p>
+
+<h2>Flusso di lavoro rapido</h2>
+<ol>
+  <li>Caricare un raster DEM in QGIS.</li>
+  <li>Aprire il plugin e andare su <span class="section-label">Elevation Profile</span>: selezionare due punti sulla mappa per estrarre la sezione.</li>
+  <li>Inserire i parametri geotecnici nella scheda <span class="section-label">Soil Parameters</span>.</li>
+  <li>Configurare eventualmente un secondo strato e/o la falda in <span class="section-label">Stratigraphy &amp; Water Table</span>.</li>
+  <li>Eseguire l'analisi da <span class="section-label">Grid Analysis</span> o <span class="section-label">Simplex Analysis</span> tramite il pulsante <em>Run</em> in basso.</li>
+  <li>Ripetere su più sezioni e accumulare i risultati nella <span class="section-label">Hazard Map</span>.</li>
+  <li>Esportare i risultati (grafico, CSV, DXF, report testuale) dal menu <em>Export</em>.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>Scheda: Elevation Profile</h2>
+
+<p>Punto di partenza obbligatorio: tutte le analisi si basano sul profilo calcolato in questa scheda.</p>
+
+<h3>Estrazione del profilo</h3>
+<ul>
+  <li><strong>DEM</strong>: selezionare un raster caricato in QGIS. Premere <em>Refresh</em> per aggiornare la lista dopo aver aggiunto nuovi layer.</li>
+  <li><strong>Select 2 points</strong>: attiva lo strumento mappa. Fare clic su P1 (punto a monte) e poi su P2 (punto a valle). Il profilo viene campionato automaticamente alla risoluzione nativa del DEM con interpolazione bilineare.</li>
+  <li>Il grafico si aggiorna immediatamente. Le superfici di scivolamento calcolate nelle analisi successive appaiono come archi colorati sovrapposti al terreno.</li>
+</ul>
+
+<h3>Controlli del grafico</h3>
+<ul>
+  <li><strong>Clear surfaces</strong>: rimuove tutte le superfici di scivolamento dal grafico senza ricalcolare il profilo.</li>
+  <li><strong>Surface visibility</strong>: lista di caselle di spunta per mostrare/nascondere singole superfici. Utile con molte superfici calcolate.</li>
+  <li><strong>Open Report</strong>: apre una finestra separata con il grafico a grandezza piena, la legenda dei colori e la tabella dei parametri geotecnici &mdash; pronta per la stampa o gli screenshot.</li>
+</ul>
+
+<h3>Menu Export</h3>
+<table>
+  <tr><th>Opzione</th><th>Output</th></tr>
+  <tr><td>Export CSV</td><td>Tabella distanza&ndash;quota del profilo campionato.</td></tr>
+  <tr><td>Export results (TXT)</td><td>Report testuale con tutti i risultati, i parametri e il sommario delle superfici.</td></tr>
+  <tr><td>Export image (PNG/SVG)</td><td>Grafico del profilo come immagine raster o vettoriale. Include opzionalmente la legenda stratigrafica.</td></tr>
+  <tr><td>Export DXF</td><td>Profilo e superfici di scivolamento su layer DXF separati, con legenda. Usa <code>ezdxf</code> se disponibile, altrimenti scrive un DXF ASCII minimale.</td></tr>
+</table>
+
+<h3>Menu Project</h3>
+<p>Salva o carica lo stato completo del plugin in un file <code>.rslope</code> (JSON). Il file contiene il profilo campionato, tutti i parametri, le superfici calcolate, la visibilità delle superfici e la configurazione della mappa di pericolosità. Al caricamento, i layer raster referenziati vengono ricercati nel progetto QGIS corrente per nome; i layer mancanti vengono segnalati con la possibilità di proseguire comunque.</p>
+
+<!-- ============================================================ -->
+<h2>Scheda: Soil Parameters</h2>
+
+<p>Proprietà geotecniche dello strato primario (superficiale). I valori sono condivisi tra analisi Grid e Simplex.</p>
+
+<table>
+  <tr><th>Parametro</th><th>Simbolo</th><th>Unità</th><th>Intervallo tipico</th></tr>
+  <tr><td>Peso di volume</td><td>&#947;</td><td>kN/m&sup3;</td><td>15 &ndash; 22</td></tr>
+  <tr><td>Coesione</td><td>c</td><td>kPa</td><td>0 &ndash; 50</td></tr>
+  <tr><td>Porosità</td><td>n</td><td>&mdash;</td><td>0,20 &ndash; 0,45</td></tr>
+  <tr><td>Angolo di attrito</td><td>&#966;</td><td>&deg;</td><td>15 &ndash; 40</td></tr>
+  <tr><td>Numero di conci</td><td>&mdash;</td><td>&mdash;</td><td>20 &ndash; 100 (default 50)</td></tr>
+</table>
+
+<p>Il blocco dei parametri del <em>Secondo Strato</em> (&#947;&#8322;, c&#8322;, n&#8322;, &#966;&#8322;) viene utilizzato quando il secondo strato è abilitato nella scheda <em>Stratigraphy &amp; Water Table</em>.</p>
+
+<!-- ============================================================ -->
+<h2>Scheda: Stratigraphy &amp; Water Table</h2>
+
+<h3>Secondo strato</h3>
+<p>Abilita un modello bilivello. L'interfaccia tra strato 1 (terreno superficiale) e strato 2 (formazione più profonda) si può definire in tre modi:</p>
+<ul>
+  <li><strong>Profondità costante dalla superficie</strong>: l'interfaccia è a profondità uniforme sotto il terreno.</li>
+  <li><strong>Profondità da raster</strong>: un layer raster fornisce la profondità dell'interfaccia in ogni punto del profilo (campionata con interpolazione bilineare).</li>
+  <li><strong>Quota assoluta</strong>: l'interfaccia è a quota fissa (m s.l.m.), indipendentemente dall'altimetria del terreno.</li>
+</ul>
+<p>Quando il secondo strato è attivo, l'interfaccia appare come linea tratteggiata marrone sul grafico del profilo.</p>
+
+<h3>Falda freatica</h3>
+<p>Abilita il calcolo delle pressioni interstiziali. La falda si può definire con gli stessi tre metodi del secondo strato. Quando attiva, viene disegnata come linea tratteggiata blu sul grafico e le pressioni interstiziali modificano le tensioni efficaci nel risolutore MEL.</p>
+
+<div class="tip">&#128161; Il grafico si aggiorna in tempo reale mentre si modificano i parametri di stratigrafia e falda: è possibile vedere immediatamente l'effetto delle variazioni.</div>
+
+<!-- ============================================================ -->
+<h2>Scheda: Grid Analysis</h2>
+
+<p>Valuta il fattore di sicurezza per un ampio insieme discreto di superfici circolari campionate su una griglia regolare di coppie (ingresso, uscita). Fornisce una visione globale della stabilità del versante al costo di un tempo di calcolo più elevato.</p>
+
+<table>
+  <tr><th>Parametro</th><th>Descrizione</th></tr>
+  <tr><td>Metodo di calcolo</td><td>Risolutore MEL: Bishop (semplificato), Morgenstern&ndash;Price, o Spencer.</td></tr>
+  <tr><td>Entry points</td><td>Numero di nodi della griglia nell'intervallo di ricerca per il punto di ingresso (monte).</td></tr>
+  <tr><td>Exit points</td><td>Numero di nodi per il punto di uscita (valle).</td></tr>
+  <tr><td>Min &#951; increment</td><td>Passo angolare minimo per il parametro di curvatura &#951;. Valori minori esplorano archi più piatti.</td></tr>
+  <tr><td>In &ndash; min / max (frazione)</td><td>Posizione frazionaria lungo il profilo [0&nbsp;=&nbsp;P1, 1&nbsp;=&nbsp;P2] entro cui le superfici possono entrare nel versante.</td></tr>
+  <tr><td>Out &ndash; min / max (frazione)</td><td>Posizione frazionaria entro cui le superfici possono uscire.</td></tr>
+  <tr><td>Surfaces to display</td><td>Numero di superfici con FS più basso da visualizzare, colorate su scala rosso&ndash;verde.</td></tr>
+</table>
+
+<div class="tip">&#128161; Per un'analisi tipica impostare <em>In min=0.0, In max=0.5</em> e <em>Out min=0.5, Out max=1.0</em> in modo che gli intervalli di ingresso e uscita non si sovrappongano. Iniziare con una griglia 10&times;10 e affinare una volta individuata la zona critica.</div>
+
+<!-- ============================================================ -->
+<h2>Scheda: Simplex Analysis</h2>
+
+<p>Utilizza un ottimizzatore Nelder&ndash;Mead inizializzato da una griglia rada per trovare la superficie con FS minimo. Molto più veloce di una griglia completa a parità di risoluzione finale; ideale per affinare la ricerca intorno a una zona critica già individuata.</p>
+
+<table>
+  <tr><th>Parametro</th><th>Descrizione</th></tr>
+  <tr><td>Metodo di calcolo</td><td>Bishop, Morgenstern&ndash;Price, o Spencer.</td></tr>
+  <tr><td>x_in min / max (frazione)</td><td>Limiti di ricerca per il punto di ingresso, come frazione della lunghezza del profilo.</td></tr>
+  <tr><td>x_out min / max (frazione)</td><td>Limiti di ricerca per il punto di uscita.</td></tr>
+  <tr><td>&#951; min / max</td><td>Limiti angolari per il parametro di curvatura dell'arco (gradi).</td></tr>
+  <tr><td>Max iterations</td><td>Limite di iterazioni per l'ottimizzatore (default 300).</td></tr>
+  <tr><td>Surfaces to display</td><td>Numero di superfici ottimizzate distinte da mostrare (deduplicate per punto di convergenza).</td></tr>
+</table>
+
+<div class="tip">&#128161; Strategia consigliata: eseguire prima una Grid Analysis per individuare la zona critica approssimativa, poi restringere i limiti x_in / x_out e avviare il Simplex per un risultato rapido e preciso.</div>
+
+<!-- ============================================================ -->
+<h2>Scheda: Hazard Map</h2>
+
+<p>Accumula i risultati di più analisi di profilo in due raster GeoTIFF georeferenziati che coprono l'area di studio:</p>
+<ul>
+  <li><strong>Raster FS minimo</strong>: ogni cella conserva il FS più basso trovato da tutte le sezioni che la attraversano.</li>
+  <li><strong>Raster profondità di scivolamento</strong>: ogni cella conserva la profondità della superficie critica corrispondente.</li>
+</ul>
+<p>I raster vengono stilizzati automaticamente al caricamento in QGIS: il FS usa la rampa rosso&ndash;giallo&ndash;verde; la profondità usa la rampa bianco&ndash;blu.</p>
+
+<h3>Flusso di lavoro per una mappa multi-profilo</h3>
+<ol>
+  <li>Analizzare il primo profilo e passare alla scheda <em>Hazard Map</em>.</li>
+  <li>Selezionare <em>Create new rasters</em>, definire estensione, risoluzione e percorsi di output, quindi premere <em>Add current result to map</em>.</li>
+  <li>Abilitare <em>Update rasters automatically after each analysis</em> per i profili successivi.</li>
+  <li>Analizzare ogni ulteriore sezione; i raster si aggiornano automaticamente.</li>
+  <li>Per ricominciare da zero, passare a <em>Update existing rasters</em> e abilitare <em>Overwrite</em>.</li>
+</ol>
+
+<div class="warn">&#9888; La Hazard Map richiede GDAL (<code>osgeo</code>) nell'ambiente Python di QGIS. È incluso nelle installazioni standard di QGIS.</div>
+
+<!-- ============================================================ -->
+<h2>Metodi di stabilità</h2>
+
+<table>
+  <tr><th>Metodo</th><th>Forze interstiziali</th><th>Equilibrio soddisfatto</th><th>Note</th></tr>
+  <tr><td>Bishop (semplificato)</td><td>Solo orizzontali</td><td>Momento</td><td>Rapido e accurato per superfici circolari. Scelta predefinita consigliata.</td></tr>
+  <tr><td>Morgenstern&ndash;Price</td><td>Inclinate (f(x) costante)</td><td>Forze + Momento</td><td>Rigoroso. Adatto anche a superfici irregolari o non circolari.</td></tr>
+  <tr><td>Spencer</td><td>Inclinate (angolo costante)</td><td>Forze + Momento</td><td>Rigoroso. Accuratezza analoga a Morgenstern&ndash;Price.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>Interpretazione dei Risultati</h2>
+
+<p>Sul grafico, le superfici di scivolamento sono colorate su una scala continua rosso&ndash;giallo&ndash;verde che copre l'intervallo di FS di tutte le superfici visualizzate. La superficie critica (FS minimo) è tracciata con linea più spessa ed etichettata <em>#1</em>.</p>
+
+<!-- ============================================================ -->
+<h2>Formati file</h2>
+
+<table>
+  <tr><th>Estensione</th><th>Contenuto</th></tr>
+  <tr><td><code>.rslope</code></td><td>Stato completo del progetto (JSON): dati del profilo, parametri, superfici calcolate, configurazione della mappa di pericolosità.</td></tr>
+  <tr><td><code>.csv</code></td><td>Profilo altimetrico: due colonne, <em>distance</em> (m) e <em>elevation</em> (m).</td></tr>
+  <tr><td><code>.txt</code></td><td>Report testuale con parametri, risultati e CSV del profilo.</td></tr>
+  <tr><td><code>.png</code> / <code>.svg</code></td><td>Immagine del grafico del profilo (raster o vettoriale).</td></tr>
+  <tr><td><code>.dxf</code></td><td>Profilo e superfici di scivolamento come polilinee DXF su layer separati, con legenda.</td></tr>
+</table>
+
+</body>
+</html>

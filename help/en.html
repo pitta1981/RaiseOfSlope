@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  body  { font-family: Arial, sans-serif; font-size: 13px; margin: 18px 20px; color: #222; line-height: 1.5; }
+  h1   { color: #2a6496; font-size: 17px; border-bottom: 2px solid #2a6496; padding-bottom: 5px; margin-top: 0; }
+  h2   { color: #2a6496; font-size: 14px; margin-top: 22px; border-left: 4px solid #2a6496; padding-left: 8px; }
+  h3   { color: #555; font-size: 13px; margin-top: 14px; margin-bottom: 4px; }
+  p    { margin: 5px 0; }
+  ul, ol { margin: 4px 0 8px 22px; padding: 0; }
+  li   { margin: 3px 0; }
+  code { background: #f0f0f0; padding: 1px 5px; border-radius: 2px; font-family: monospace; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0 12px 0; }
+  th   { background: #2a6496; color: #fff; padding: 5px 8px; text-align: left; font-size: 12px; }
+  td   { padding: 4px 8px; border-bottom: 1px solid #ddd; font-size: 12px; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7f7f7; }
+  .tip  { background: #e8f4fd; border-left: 4px solid #3498db; padding: 7px 11px; margin: 10px 0; }
+  .warn { background: #fef9e7; border-left: 4px solid #f39c12; padding: 7px 11px; margin: 10px 0; }
+  .section-label { font-weight: bold; color: #2a6496; }
+</style>
+</head>
+<body>
+
+<h1>Raise of Slopes &mdash; User Guide</h1>
+
+<p>This QGIS plugin performs <strong>slope stability analysis</strong> based on the Limit Equilibrium Method (LEM) with circular slip surfaces. Starting from a DEM, it extracts an elevation cross-section, models the subsurface stratigraphy and phreatic surface, and finds the critical slip surface that minimises the Factor of Safety (FoS) using either an exhaustive grid search or a Nelder&ndash;Mead simplex optimiser.</p>
+
+<h2>Quick-start workflow</h2>
+<ol>
+  <li>Load a DEM raster into QGIS.</li>
+  <li>Open the plugin and go to <span class="section-label">Elevation Profile</span>: select two points on the map to extract the cross-section.</li>
+  <li>Go to <span class="section-label">Soil Parameters</span> and enter the geotechnical properties.</li>
+  <li>Optionally configure a second layer and / or water table in <span class="section-label">Stratigraphy &amp; Water Table</span>.</li>
+  <li>Run an analysis from <span class="section-label">Grid Analysis</span> or <span class="section-label">Simplex Analysis</span> using the <em>Run</em> button at the bottom of the window.</li>
+  <li>Repeat for multiple cross-sections and accumulate results into a <span class="section-label">Hazard Map</span>.</li>
+  <li>Export results (chart, CSV, DXF, text report) from the <em>Export</em> menu.</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>Tab: Elevation Profile</h2>
+
+<p>All analyses are anchored to the elevation profile. Compute this first.</p>
+
+<h3>Profile extraction</h3>
+<ul>
+  <li><strong>DEM</strong>: choose any raster layer loaded in QGIS. Press <em>Refresh</em> to update the list after loading new layers.</li>
+  <li><strong>Select 2 points</strong>: activates the map tool. Click P1 (upslope end) then P2 (downslope end). The profile is sampled automatically at the native DEM pixel size using bilinear interpolation.</li>
+  <li>The profile chart updates immediately. Slip surfaces computed in subsequent analyses appear as coloured arcs overlaid on the terrain.</li>
+</ul>
+
+<h3>Chart controls</h3>
+<ul>
+  <li><strong>Clear surfaces</strong>: removes all computed slip surfaces from the chart without re-computing the profile.</li>
+  <li><strong>Surface visibility</strong> list: check or uncheck individual surfaces to show or hide them. Useful when many surfaces are computed.</li>
+  <li><strong>Open Report</strong>: opens a detached window with a full-size chart, colour legend, and geotechnical parameter table &mdash; formatted for printing or screenshots.</li>
+</ul>
+
+<h3>Export menu</h3>
+<table>
+  <tr><th>Option</th><th>Output</th></tr>
+  <tr><td>Export CSV</td><td>Distance&ndash;elevation table of the sampled profile.</td></tr>
+  <tr><td>Export results (TXT)</td><td>Plain-text report with all analysis results, parameters, and surface summary.</td></tr>
+  <tr><td>Export image (PNG/SVG)</td><td>The profile chart as a raster or vector image. Optionally includes the stratigraphy legend.</td></tr>
+  <tr><td>Export DXF</td><td>Profile polyline and slip surfaces on separate DXF layers, with a legend. Uses <code>ezdxf</code> if installed, otherwise writes a minimal ASCII DXF.</td></tr>
+</table>
+
+<h3>Project menu</h3>
+<p>Save or load the complete plugin state to a <code>.rslope</code> file (JSON). The file stores the sampled profile data, all parameters, computed surfaces, surface visibility, and hazard-map configuration. On load, any raster layers referenced by the project are looked up in the current QGIS project by name; missing layers are reported with an option to continue.</p>
+
+<!-- ============================================================ -->
+<h2>Tab: Soil Parameters</h2>
+
+<p>Geotechnical properties for the primary (surface) soil layer. These values are shared between the Grid and Simplex analyses.</p>
+
+
+<p>The <em>Second Layer</em> parameter block (&#947;&#8322;, c&#8322;, n&#8322;, &#966;&#8322;) is used when a second stratum is enabled in the <em>Stratigraphy &amp; Water Table</em> tab.</p>
+
+<!-- ============================================================ -->
+<h2>Tab: Stratigraphy &amp; Water Table</h2>
+
+<h3>Second layer</h3>
+<p>Enables a two-layer model. The interface between layer 1 (surface soil) and layer 2 (deeper formation) can be defined in three ways:</p>
+<ul>
+  <li><strong>Constant depth from ground surface</strong>: the interface is at a uniform depth below the terrain everywhere.</li>
+  <li><strong>Depth from raster</strong>: a raster layer provides the depth of the interface at each point along the profile (sampled with bilinear interpolation).</li>
+  <li><strong>Absolute elevation</strong>: the interface is at a fixed elevation (m a.s.l.), regardless of terrain height.</li>
+</ul>
+<p>The interface is drawn as a dashed brown line on the profile chart when the second layer is active.</p>
+
+<h3>Water table</h3>
+<p>Enables pore-pressure calculations. The water table can be defined using the same three modes as the second layer. When active, the phreatic surface is drawn as a blue dashed line on the chart, and pore pressures modify the effective stresses in the LEM solver.</p>
+
+<div class="tip">&#128161; Preview the stratigraphy and water table directly on the profile chart as you adjust the parameters &mdash; the chart updates in real time.</div>
+
+<!-- ============================================================ -->
+<h2>Tab: Grid Analysis</h2>
+
+<p>Evaluates the Factor of Safety for a large discrete set of circular slip surfaces sampled on a regular grid of (entry, exit) pairs. Provides a global view of the stability landscape at the cost of computation time.</p>
+
+<table>
+  <tr><th>Parameter</th><th>Description</th></tr>
+  <tr><td>Calculation method</td><td>LEM solver: Bishop (simplified), Morgenstern&ndash;Price, or Spencer.</td></tr>
+  <tr><td>Entry points</td><td>Number of grid nodes along the entry (upslope) search interval.</td></tr>
+  <tr><td>Exit points</td><td>Number of grid nodes along the exit (downslope) search interval.</td></tr>
+  <tr><td>Min &#951; increment</td><td>Minimum angular step for the slip-circle curvature parameter &#951;. Smaller values explore shallower arcs.</td></tr>
+  <tr><td>In &ndash; min / max (fraction)</td><td>Fractional position along the profile [0&nbsp;=&nbsp;P1, 1&nbsp;=&nbsp;P2] where slip surfaces may enter the slope.</td></tr>
+  <tr><td>Out &ndash; min / max (fraction)</td><td>Fractional position where slip surfaces may exit the slope.</td></tr>
+  <tr><td>Surfaces to display</td><td>Number of surfaces with the lowest FoS to show, coloured on a red&ndash;green scale.</td></tr>
+</table>
+
+<div class="tip">&#128161; For a typical downslope analysis set <em>In min=0.0, In max=0.5</em> and <em>Out min=0.5, Out max=1.0</em> so that the entry and exit search intervals do not overlap. Start with 10&times;10 grid points and refine once you know the critical zone.</div>
+
+<!-- ============================================================ -->
+<h2>Tab: Simplex Analysis</h2>
+
+<p>Uses a Nelder&ndash;Mead optimiser seeded from a coarse grid to find the minimum-FoS surface. Much faster than a full grid for the same resolution, and well-suited for fine-tuning around a known critical zone.</p>
+
+<table>
+  <tr><th>Parameter</th><th>Description</th></tr>
+  <tr><td>Calculation method</td><td>Bishop, Morgenstern&ndash;Price, or Spencer.</td></tr>
+  <tr><td>x_in min / max (fraction)</td><td>Search bounds for the entry point, as a fraction of the profile length.</td></tr>
+  <tr><td>x_out min / max (fraction)</td><td>Search bounds for the exit point.</td></tr>
+  <tr><td>&#951; min / max</td><td>Angular bounds for the arc curvature parameter (degrees).</td></tr>
+  <tr><td>Max iterations</td><td>Iteration cap for the Nelder&ndash;Mead optimiser (default 300).</td></tr>
+  <tr><td>Surfaces to display</td><td>Number of distinct optimised surfaces to show (deduplicated by convergence point).</td></tr>
+</table>
+
+<div class="tip">&#128161; Recommended strategy: run a Grid Analysis first to identify the approximate critical zone, then narrow the x_in / x_out bounds and run Simplex for a fast, precise result.</div>
+
+<!-- ============================================================ -->
+<h2>Tab: Hazard Map</h2>
+
+<p>Accumulates stability results from many profile analyses into two georeferenced GeoTIFF rasters covering the study area:</p>
+<ul>
+  <li><strong>Min FoS raster</strong>: each cell stores the lowest FoS found across all profiles that cross it.</li>
+  <li><strong>Slip depth raster</strong>: each cell stores the depth of the corresponding critical slip surface.</li>
+</ul>
+<p>The rasters are styled automatically when loaded into QGIS: FoS uses the red&ndash;yellow&ndash;green colour ramp; depth uses a white&ndash;blue ramp.</p>
+
+<h3>Workflow for a multi-profile hazard map</h3>
+<ol>
+  <li>Analyse the first cross-section and switch to <em>Hazard Map</em>.</li>
+  <li>Select <em>Create new rasters</em>, define the output extent, cell size, and output paths, then click <em>Add current result to map</em>.</li>
+  <li>Enable <em>Update rasters automatically after each analysis</em> for subsequent profiles.</li>
+  <li>Analyse each additional cross-section; the rasters update automatically.</li>
+  <li>To restart from scratch, switch to <em>Update existing rasters</em> and enable <em>Overwrite</em>.</li>
+</ol>
+
+<div class="warn">&#9888; The Hazard Map requires GDAL (<code>osgeo</code>) to be available in the QGIS Python environment. This is included in standard QGIS installations.</div>
+
+<!-- ============================================================ -->
+<h2>Stability methods</h2>
+
+<table>
+  <tr><th>Method</th><th>Interslice forces</th><th>Equilibrium satisfied</th><th>Notes</th></tr>
+  <tr><td>Bishop (simplified)</td><td>Horizontal only</td><td>Moment</td><td>Fast and accurate for circular surfaces. Recommended default.</td></tr>
+  <tr><td>Morgenstern&ndash;Price</td><td>Inclined (constant f(x))</td><td>Force + Moment</td><td>Rigorous. Suitable for irregular or non-circular surfaces.</td></tr>
+  <tr><td>Spencer</td><td>Inclined (constant angle)</td><td>Force + Moment</td><td>Rigorous. Similar accuracy to Morgenstern&ndash;Price.</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>Results interpretation</h2>
+
+<p>On the chart, slip surfaces are coloured on a continuous red&ndash;yellow&ndash;green scale spanning the FoS range of all currently displayed surfaces. The critical surface (lowest FoS) is drawn with a thicker line and labelled <em>#1</em>.</p>
+
+<!-- ============================================================ -->
+<h2>File formats</h2>
+
+<table>
+  <tr><th>Extension</th><th>Contents</th></tr>
+  <tr><td><code>.rslope</code></td><td>Full project state (JSON): profile data, parameters, computed surfaces, hazard-map configuration.</td></tr>
+  <tr><td><code>.csv</code></td><td>Elevation profile: two columns, <em>distance</em> (m) and <em>elevation</em> (m).</td></tr>
+  <tr><td><code>.txt</code></td><td>Plain-text analysis report including parameters, results, and profile CSV.</td></tr>
+  <tr><td><code>.png</code> / <code>.svg</code></td><td>Profile chart image (raster or vector).</td></tr>
+  <tr><td><code>.dxf</code></td><td>Profile and slip surfaces as DXF polylines on separate named layers, with a legend.</td></tr>
+</table>
+
+</body>
+</html>
