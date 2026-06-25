@@ -13,7 +13,7 @@ about=
  Lalicata, L.M., Bressan, A., Pittaluga, S. et al. An Efficient Slope Stability Algorithm with Physically Consistent Parametrisation of Slip Surfaces. Int J Civ Eng 23, 671-682 (2025). https://doi.org/10.1007/s40999-024-01053-1 
  
  -- Acknowledgements: funded by the European Union NextGenerationEU and MUR (NRRP, Mission 4, Component 2, Investment 1.5) project RAISE - Robotics and AI for Socio-economic Empowerment (ECS00000035).
-category=Analysis
+category=Raster
 icon=icon.svg
 experimental=True
 deprecated=False
