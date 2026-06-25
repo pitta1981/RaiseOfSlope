@@ -119,7 +119,7 @@ class ProfileCanvas(QWidget):
             svg.setFileName(path)
             svg.setSize(QSize(width, total_h))
             svg.setViewBox(QRectF(0, 0, width, total_h).toRect())
-            svg.setTitle('The Raise Of Slopes - Profile Export')
+            svg.setTitle('Raise of Slopes - Profile Export')
             painter = QPainter(svg)
             painter.fillRect(QRectF(0, 0, width, total_h), Qt.white)
             self._paint_content(painter, QRectF(0, 0, width, total_h), include_table=include_table, table_rows=table_rows or [])
@@ -396,7 +396,7 @@ class ProfileDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Terrain Profile - The Raise Of Slopes")
+        self.setWindowTitle("Raise of Slopes")
         self._raster_layer = None
         self._p1 = None
         self._p2 = None
@@ -407,7 +407,7 @@ class ProfileDialog(QDialog):
         self._build_ui()
 
     def _settings_key(self):
-        return "TheRaiseOfSlopes/lastPath"
+        return "RaiseOfSlopes/lastPath"
 
     def _get_last_dir(self):
         try:
@@ -615,7 +615,7 @@ class ProfileDialog(QDialog):
         act_include_legend.setCheckable(True)
         # Carica valore salvato nelle impostazioni (di default True)
         try:
-            v = QSettings().value("TheRaiseOfSlopes/includeLegend", True)
+            v = QSettings().value("RaiseOfSlopes/includeLegend", True)
             act_include_legend.setChecked(bool(v) if not isinstance(v, str) else v.lower() in ('1', 'true', 'yes'))
         except Exception:
             act_include_legend.setChecked(True)
@@ -1701,7 +1701,7 @@ class ProfileDialog(QDialog):
     def _on_include_legend_toggled(self, state):
         """Salva la preferenza di includere la legenda nell'export immagine."""
         try:
-            QSettings().setValue("TheRaiseOfSlopes/includeLegend", bool(state))
+            QSettings().setValue("RaiseOfSlopes/includeLegend", bool(state))
         except Exception:
             pass
 
@@ -1836,7 +1836,7 @@ class ReportDialog(QDialog):
 
     def __init__(self, series, colorbar, stratigraphy_rows, results_text='', parent=None):
         super().__init__(parent)
-        self.setWindowTitle("The Raise Of Slopes - Profile Report")
+        self.setWindowTitle("Raise of Slopes - Profile Report")
         self.resize(960, 720)
         self._series = series
         self._colorbar = colorbar
@@ -1851,7 +1851,7 @@ class ReportDialog(QDialog):
         layout.setContentsMargins(14, 10, 14, 10)
 
         # ── Header ───────────────────────────────────────────────────────────
-        title = QLabel('The Raise Of Slopes — Stability Analysis Report')
+        title = QLabel('Raise of Slopes — Stability Analysis Report')
         title_font = QFont('Sans Serif', 12)
         title_font.setBold(True)
         title.setFont(title_font)

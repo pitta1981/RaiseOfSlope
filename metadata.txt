@@ -1,12 +1,18 @@
 [general]
-name=Raise Of Slopes
+name=Raise of Slopes
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=DEM profile analysis and slope stability with limit equilibrium methods (Bishop, Morgenstern-Price, Spencer)
 version=0.9.0
 author=S.Pittaluga, L.M. Lalicata, A. Bressan, L. Tamellini, D. Gallipoli
 email=simone.pittaluga@cnr.it
-about=QGIS plugin for DEM profile extraction, slope stability analysis (grid/simplex) with limit equilibrium method, stratigraphy and groundwater handling, and results export as image, report and DXF. If you use this plugin, please cite: Lalicata, L.M., Bressan, A., Pittaluga, S. et al. An Efficient Slope Stability Algorithm with Physically Consistent Parametrisation of Slip Surfaces. Int J Civ Eng 23, 671-682 (2025). https://doi.org/10.1007/s40999-024-01053-1 -- Acknowledgements: funded by the European Union NextGenerationEU and MUR (NRRP, Mission 4, Component 2, Investment 1.5) project RAISE - Robotics and AI for Socio-economic Empowerment (ECS00000035).
+about=
+ QGIS plugin for DEM profile extraction, slope stability analysis (grid/simplex) with limit equilibrium method, stratigraphy and groundwater handling, and results export as image, report and DXF. 
+ 
+ If you use this plugin, please cite: 
+ Lalicata, L.M., Bressan, A., Pittaluga, S. et al. An Efficient Slope Stability Algorithm with Physically Consistent Parametrisation of Slip Surfaces. Int J Civ Eng 23, 671-682 (2025). https://doi.org/10.1007/s40999-024-01053-1 
+ 
+ -- Acknowledgements: funded by the European Union NextGenerationEU and MUR (NRRP, Mission 4, Component 2, Investment 1.5) project RAISE - Robotics and AI for Socio-economic Empowerment (ECS00000035).
 category=Analysis
 icon=icon.svg
 experimental=True

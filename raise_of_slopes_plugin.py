@@ -52,10 +52,10 @@ except ImportError as e:
 
 
 def classFactory(iface):  # QGIS will call this function
-    return TheRaiseOfSlopesPlugin(iface)
+    return RaiseOfSlopesPlugin(iface)
 
 
-class TheRaiseOfSlopesPlugin:
+class RaiseOfSlopesPlugin:
     def __init__(self, iface):
         """Initialize the plugin state."""
         self.iface = iface
@@ -84,15 +84,15 @@ class TheRaiseOfSlopesPlugin:
         self.surface_label_items = []   # list of QGraphicsSimpleTextItem or annotation items
 
     def initGui(self):
-        self.action = QAction(QIcon(self._icon_path()), "The Raise Of Slopes - Profile", self.iface.mainWindow())
+        self.action = QAction(QIcon(self._icon_path()), "Raise of Slopes - Slope stability analysis (LEM)", self.iface.mainWindow())
         self.action.triggered.connect(self.run)
-        self.iface.addPluginToMenu("TheRaiseOfSlopes", self.action)
+        self.iface.addPluginToMenu("Slope Stability", self.action)
         self.iface.addToolBarIcon(self.action)
 
     def unload(self):
         if self.action:
             self.iface.removeToolBarIcon(self.action)
-            self.iface.removePluginMenu("TheRaiseOfSlopes", self.action)
+            self.iface.removePluginMenu("Slope Stability", self.action)
         self._restore_map_tool()
         self._clear_rubber_bands()
 
@@ -300,7 +300,7 @@ class TheRaiseOfSlopesPlugin:
         """Export text results (grid and simplex) to a text file."""
         try:
             timestamp = datetime.utcnow().isoformat() + 'Z'
-            header = [f"The Raise Of Slopes - Exported results: {timestamp}"]
+            header = [f"Raise of Slopes - Exported results: {timestamp}"]
             if self.profile_p1 and self.profile_p2:
                 header.append(f"P1: ({self.profile_p1.x():.3f}, {self.profile_p1.y():.3f})  P2: ({self.profile_p2.x():.3f}, {self.profile_p2.y():.3f})")
             if self.profile_raster_layer is not None:

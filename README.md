@@ -1,4 +1,4 @@
-# The Raise Of Slopes – QGIS Plugin
+# Raise of Slopes – QGIS Plugin
 
 A QGIS plugin for slope stability analysis using limit equilibrium methods (Bishop, Morgenstern-Price, Spencer).
 
@@ -43,7 +43,7 @@ No local fallbacks or copies of the LE modules are present.
 macOS example – manual copy:
 
 ```bash
-cp -r /path/to/RaiseOfSlope ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/TheRaiseOfSlopes
+cp -r /path/to/RaiseOfSlope ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/RaiseOfSlopes
 ```
 
 Or, from the plugin root:
@@ -51,7 +51,7 @@ Or, from the plugin root:
 ```bash
 python install_plugin.py            # copy to default directory
 python install_plugin.py --dest /path/to/plugins
-python install_plugin.py --zip      # generate TheRaiseOfSlopes.zip
+python install_plugin.py --zip      # generate RaiseOfSlopes.zip
 ```
 
 Then enable the plugin in QGIS via `Plugins > Manage and Install Plugins`.
@@ -88,7 +88,7 @@ Verify that the following directories exist and contain the expected modules (`l
 
 | File | Purpose |
 |------|---------|
-| `the_raise_of_slopes_plugin.py` | Main plugin logic |
+| `raise_of_slopes_plugin.py` | Main plugin logic |
 | `ui/profile_dialog.py` | User interface |
 | `debug_stability_standalone.py` | Standalone debug outside QGIS |
 | `INTEGRATION_NOTES.md` | Technical integration notes |

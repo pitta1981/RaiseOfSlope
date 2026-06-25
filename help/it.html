@@ -24,7 +24,7 @@
 
 <h1>Raise of Slopes &mdash; Guida utente</h1>
 
-<p>Questo plugin per QGIS esegue l'<strong>analisi di stabilità dei versanti</strong> con il Metodo dell'Equilibrio Limite (MEL) su superfici di scivolamento circolari. A partire da un DEM estrae un profilo altimetrico, modella la stratigrafia e la falda, e cerca la superficie critica che minimizza il Fattore di Sicurezza (FS) tramite una griglia di ricerca esaustiva oppure un ottimizzatore simplex di Nelder&ndash;Mead.</p>
+<p>Questo plugin per QGIS esegue l'<strong>analisi di stabilità dei versanti</strong> con il Metodo dell'Equilibrio Limite (Bishop, Spencer, Morgenstern-Price) su superfici di scivolamento circolari. A partire da un DEM estrae un profilo altimetrico, modella la stratigrafia e la falda, e cerca la superficie critica che minimizza il Fattore di Sicurezza (FS) tramite una griglia di ricerca esaustiva oppure un ottimizzatore simplex di Nelder&ndash;Mead.</p>
 
 <h2>Flusso di lavoro rapido</h2>
 <ol>
@@ -150,8 +150,6 @@
   <tr><td>Max iterations</td><td>Limite di iterazioni per l'ottimizzatore (default 300).</td></tr>
   <tr><td>Surfaces to display</td><td>Numero di superfici ottimizzate distinte da mostrare (deduplicate per punto di convergenza).</td></tr>
 </table>
-
-<div class="tip">&#128161; Strategia consigliata: eseguire prima una Grid Analysis per individuare la zona critica approssimativa, poi restringere i limiti x_in / x_out e avviare il Simplex per un risultato rapido e preciso.</div>
 
 <!-- ============================================================ -->
 <h2>Scheda: Hazard Map</h2>

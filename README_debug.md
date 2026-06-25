@@ -18,7 +18,7 @@ python3 debug_stability_standalone.py
 ```
 
 **Opzione B: Usa un profilo esportato da QGIS**
-1. Apri QGIS con il plugin TheRaiseOfSlopes
+1. Apri QGIS con il plugin Raise of Slopes
 2. Seleziona due punti sul DEM per creare un profilo
 3. Calcola il profilo
 4. Esporta il profilo come CSV (menu "Esporta profilo")

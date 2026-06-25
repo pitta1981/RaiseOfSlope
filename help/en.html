@@ -24,7 +24,7 @@
 
 <h1>Raise of Slopes &mdash; User Guide</h1>
 
-<p>This QGIS plugin performs <strong>slope stability analysis</strong> based on the Limit Equilibrium Method (LEM) with circular slip surfaces. Starting from a DEM, it extracts an elevation cross-section, models the subsurface stratigraphy and phreatic surface, and finds the critical slip surface that minimises the Factor of Safety (FoS) using either an exhaustive grid search or a Nelder&ndash;Mead simplex optimiser.</p>
+<p>This QGIS plugin performs <strong>slope stability analysis</strong> based on the Limit Equilibrium Method (Bishop, Spencer, Morgenstern-Price) with circular slip surfaces. Starting from a DEM, it extracts an elevation cross-section, models the subsurface stratigraphy and phreatic surface, and finds the critical slip surface that minimises the Factor of Safety (FoS) using either an exhaustive grid search or a Nelder&ndash;Mead simplex optimiser.</p>
 
 <h2>Quick-start workflow</h2>
 <ol>
@@ -142,8 +142,6 @@
   <tr><td>Max iterations</td><td>Iteration cap for the Nelder&ndash;Mead optimiser (default 300).</td></tr>
   <tr><td>Surfaces to display</td><td>Number of distinct optimised surfaces to show (deduplicated by convergence point).</td></tr>
 </table>
-
-<div class="tip">&#128161; Recommended strategy: run a Grid Analysis first to identify the approximate critical zone, then narrow the x_in / x_out bounds and run Simplex for a fast, precise result.</div>
 
 <!-- ============================================================ -->
 <h2>Tab: Hazard Map</h2>

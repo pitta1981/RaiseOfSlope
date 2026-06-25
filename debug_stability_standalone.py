@@ -483,7 +483,7 @@ def main():
     if not os.path.exists(csv_path):
         print(f"File CSV non trovato: {csv_path}")
         print("\nIstruzioni:")
-        print("1. Apri QGIS con il plugin TheRaiseOfSlopes")
+        print("1. Apri QGIS con il plugin Raise of Slopes")
         print("2. Seleziona due punti sul DEM per creare un profilo")
         print("3. Calcola il profilo")
         print("4. Esporta il profilo come CSV")

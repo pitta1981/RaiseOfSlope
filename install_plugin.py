@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Install the Raise Of Slopes QGIS plugin.
+"""Install the Raise of Slopes QGIS plugin.
 
 This script can either:
   - copy the plugin folder into the QGIS plugins directory (development install),
   - or create a ZIP archive appropriate for "Install from ZIP" in QGIS.
 
-The plugin folder name is determined from metadata.txt ("TheRaiseOfSlopes").
+The plugin folder name is determined from metadata.txt ("RaiseOfSlopes").
 
 Usage:
     python install_plugin.py [--dest DEST] [--zip]
@@ -24,7 +24,7 @@ import shutil
 import sys
 import zipfile
 
-PLUGIN_NAME = "TheRaiseOfSlopes"
+PLUGIN_NAME = "RaiseOfSlopes"
 SOURCE_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -173,7 +173,7 @@ def zip_plugin(dest_filename: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Install the Raise Of Slopes QGIS plugin")
+    parser = argparse.ArgumentParser(description="Install Raise of Slopes QGIS plugin")
     parser.add_argument(
         "--dest",
         help="Explicit QGIS plugins directory. Overrides platform guess.",
