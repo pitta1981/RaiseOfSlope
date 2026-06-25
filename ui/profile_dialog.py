@@ -436,6 +436,7 @@ class ProfileDialog(QDialog):
         except Exception:
             pass
         self._sync_hazard_dem()
+        self._update_hazard_enabled_state()
 
     def _create_help_tab(self):
         """Create the Help tab with a language selector and an HTML browser."""
@@ -1140,6 +1141,15 @@ class ProfileDialog(QDialog):
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
+        self.hazard_enable_checkbox = QCheckBox("Enable hazard map")
+        self.hazard_enable_checkbox.setChecked(False)
+        self.hazard_enable_checkbox.toggled.connect(self._on_hazard_enabled_changed)
+        layout.addWidget(self.hazard_enable_checkbox)
+
+        self.hazard_content_widget = QWidget()
+        content_layout = QVBoxLayout(self.hazard_content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+
         # --- Output mode: create new / update existing -------------------
         self.hazard_mode_group = QButtonGroup(self)
         self.hazard_new_radio = QRadioButton("Create new rasters")
@@ -1153,7 +1163,7 @@ class ProfileDialog(QDialog):
         mode_layout = QVBoxLayout(mode_group)
         mode_layout.addWidget(self.hazard_new_radio)
         mode_layout.addWidget(self.hazard_existing_radio)
-        layout.addWidget(mode_group)
+        content_layout.addWidget(mode_group)
 
         # --- Create new: grid + output paths -----------------------------
         self.hazard_new_widget = QGroupBox("New rasters")
@@ -1183,7 +1193,7 @@ class ProfileDialog(QDialog):
         path_form.addRow("Depth raster:", self.hazard_depth_file)
         new_layout.addLayout(path_form)
 
-        layout.addWidget(self.hazard_new_widget)
+        content_layout.addWidget(self.hazard_new_widget)
 
         # --- Update existing: pick layers + overwrite toggle -------------
         self.hazard_existing_widget = QGroupBox("Existing rasters")
@@ -1197,28 +1207,51 @@ class ProfileDialog(QDialog):
         self.hazard_overwrite_checkbox = QCheckBox("Overwrite (clear) instead of update")
         existing_layout.addRow(self.hazard_overwrite_checkbox)
         self.hazard_existing_widget.setVisible(False)
-        layout.addWidget(self.hazard_existing_widget)
+        content_layout.addWidget(self.hazard_existing_widget)
 
         # --- Options + action -------------------------------------------
         self.hazard_auto_update_checkbox = QCheckBox("Update rasters automatically after each analysis")
-        layout.addWidget(self.hazard_auto_update_checkbox)
+        content_layout.addWidget(self.hazard_auto_update_checkbox)
 
         self.hazard_add_to_project_checkbox = QCheckBox("Load resulting rasters into the project")
         self.hazard_add_to_project_checkbox.setChecked(True)
-        layout.addWidget(self.hazard_add_to_project_checkbox)
+        content_layout.addWidget(self.hazard_add_to_project_checkbox)
 
         self.btnWriteHazardMap = QPushButton("Add current result to map")
         self.btnWriteHazardMap.clicked.connect(self._emit_write_hazard_map)
-        layout.addWidget(self.btnWriteHazardMap)
+        content_layout.addWidget(self.btnWriteHazardMap)
 
+        content_layout.addStretch()
+        layout.addWidget(self.hazard_content_widget)
         layout.addStretch()
         self.tab_widget.addTab(self._wrap_in_scroll(hazard_widget), "Hazard Map")
+
+        self._update_hazard_enabled_state()
 
         # Keep the hazard grid aligned with the profile DEM selection.
         try:
             self.cboRaster.currentIndexChanged.connect(self._sync_hazard_dem)
         except Exception:
             pass
+
+    def _on_hazard_enabled_changed(self, checked):
+        self._update_hazard_enabled_state(enabled=checked)
+
+    def _update_hazard_enabled_state(self, enabled=None):
+        if enabled is None:
+            enabled = getattr(self, 'hazard_enable_checkbox', None) is not None and self.hazard_enable_checkbox.isChecked()
+        if hasattr(self, 'hazard_content_widget'):
+            self.hazard_content_widget.setEnabled(bool(enabled))
+        if hasattr(self, 'btnWriteHazardMap'):
+            self.btnWriteHazardMap.setEnabled(bool(enabled))
+        if not enabled:
+            self.setStatus("Hazard map is disabled.")
+        else:
+            try:
+                if self.lblStatus.text() == "Hazard map is disabled.":
+                    self.setStatus("")
+            except Exception:
+                pass
 
     def _on_hazard_mode_changed(self):
         """Toggle the new/existing parameter blocks based on the selected mode."""
@@ -1249,7 +1282,7 @@ class ProfileDialog(QDialog):
     def hazard_auto_update_enabled(self):
         """Whether the hazard rasters should be refreshed after each analysis."""
         try:
-            return self.hazard_auto_update_checkbox.isChecked()
+            return self.hazard_enable_checkbox.isChecked() and self.hazard_auto_update_checkbox.isChecked()
         except Exception:
             return False
 
@@ -1257,6 +1290,7 @@ class ProfileDialog(QDialog):
         """Collect the hazard-map configuration into a dict for the plugin."""
         mode = 'existing' if self.hazard_mode_group.checkedId() == 1 else 'new'
         params = {
+            'enabled': self.hazard_enable_checkbox.isChecked(),
             'mode': mode,
             'add_to_project': self.hazard_add_to_project_checkbox.isChecked(),
         }
@@ -1276,6 +1310,9 @@ class ProfileDialog(QDialog):
         return params
 
     def _emit_write_hazard_map(self):
+        if not self.hazard_enable_checkbox.isChecked():
+            self.setStatus("Hazard map is disabled.")
+            return
         self.writeHazardMapRequested.emit(self.get_hazard_map_params())
 
     def set_hazard_layer_combos(self, fos_layer, depth_layer):
@@ -1296,6 +1333,7 @@ class ProfileDialog(QDialog):
             extent = self.hazard_extent_group.outputExtent()
             crs = self.hazard_extent_group.outputCrs()
             state = {
+                'enabled': self.hazard_enable_checkbox.isChecked(),
                 'mode': mode,
                 'cell_size': self.hazard_cell_size_spinbox.value(),
                 'extent': ([extent.xMinimum(), extent.yMinimum(),
@@ -1323,12 +1361,14 @@ class ProfileDialog(QDialog):
         if not state:
             return
         try:
+            self.hazard_enable_checkbox.setChecked(bool(state.get('enabled', False)))
             mode = state.get('mode', 'new')
             if mode == 'existing':
                 self.hazard_existing_radio.setChecked(True)
             else:
                 self.hazard_new_radio.setChecked(True)
             self._on_hazard_mode_changed()
+            self._update_hazard_enabled_state()
 
             if state.get('cell_size'):
                 self.hazard_cell_size_spinbox.setValue(float(state['cell_size']))
@@ -1696,7 +1736,8 @@ class ProfileDialog(QDialog):
             self.loadProjectRequested.emit(path)
 
     def setStatus(self, msg):
-        self.lblStatus.setText(msg)
+        if hasattr(self, 'lblStatus') and self.lblStatus is not None:
+            self.lblStatus.setText(msg)
 
     def _on_include_legend_toggled(self, state):
         """Salva la preferenza di includere la legenda nell'export immagine."""

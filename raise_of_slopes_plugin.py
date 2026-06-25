@@ -288,10 +288,26 @@ class RaiseOfSlopesPlugin:
     def _export_profile(self, path):
         """Export the profile as CSV."""
         try:
+            params = self.dlg._get_stratigraphy_params() if self.dlg else {}
+            water_y = self.compute_water_profile_for_display(params) if params.get('enable_water') else None
+            layer2_y = self.compute_layer2_profile_for_display(params) if params.get('enable_layer2') else None
+
             with open(path, 'w', encoding='utf-8') as f:
-                f.write('distance,elevation\n')
-                for d, z in zip(self.profile_distances, self.profile_elevations):
-                    f.write(f"{d},{z}\n")
+                header = 'distance,elevation'
+                if water_y is not None:
+                    header += ',water_table'
+                if layer2_y is not None:
+                    header += ',layer2_interface'
+                f.write(header + '\n')
+                for i, (d, z) in enumerate(zip(self.profile_distances, self.profile_elevations)):
+                    row = f"{d},{z}"
+                    if water_y is not None:
+                        wv = water_y[i] if i < len(water_y) else ''
+                        row += f",{'' if wv is None else wv}"
+                    if layer2_y is not None:
+                        lv = layer2_y[i] if i < len(layer2_y) else ''
+                        row += f",{'' if lv is None else lv}"
+                    f.write(row + '\n')
             self.dlg.setStatus(f"Profile saved: {path}")
         except Exception as e:
             self.dlg.setStatus(f"Save error: {e}")
@@ -311,8 +327,10 @@ class RaiseOfSlopesPlugin:
 
             # Stratigrafia
             try:
-                strat_info = self._format_stratigraphy_info(self.dlg._get_stratigraphy_params())
+                strat_params = self.dlg._get_stratigraphy_params()
+                strat_info = self._format_stratigraphy_info(strat_params)
             except Exception:
+                strat_params = {}
                 strat_info = ''
 
             grid_text = ''
@@ -343,10 +361,24 @@ class RaiseOfSlopesPlugin:
                         f.write(f"- {s}\n")
 
                 # Include profile as CSV at the end of the file
+                water_y = self.compute_water_profile_for_display(strat_params) if strat_params.get('enable_water') else None
+                layer2_y = self.compute_layer2_profile_for_display(strat_params) if strat_params.get('enable_layer2') else None
                 f.write('\n--- PROFILE (CSV) ---\n')
-                f.write('distance,elevation\n')
-                for d, z in zip(self.profile_distances, self.profile_elevations):
-                    f.write(f"{d},{z}\n")
+                header = 'distance,elevation'
+                if water_y is not None:
+                    header += ',water_table'
+                if layer2_y is not None:
+                    header += ',layer2_interface'
+                f.write(header + '\n')
+                for i, (d, z) in enumerate(zip(self.profile_distances, self.profile_elevations)):
+                    row = f"{d},{z}"
+                    if water_y is not None:
+                        wv = water_y[i] if i < len(water_y) else ''
+                        row += f",{'' if wv is None else wv}"
+                    if layer2_y is not None:
+                        lv = layer2_y[i] if i < len(layer2_y) else ''
+                        row += f",{'' if lv is None else lv}"
+                    f.write(row + '\n')
 
             self.dlg.setStatus(f"Results saved: {path}")
         except Exception as e:
@@ -374,7 +406,11 @@ class RaiseOfSlopesPlugin:
             print(traceback.format_exc())
 
     def _export_profile_dxf(self, path):
-        """Export the profile and surfaces as DXF. Uses ezdxf if installed, otherwise writes a minimal ASCII DXF."""
+        """Export profile, second layer, water table and slip surfaces as DXF.
+
+        Uses ezdxf if installed, otherwise writes a minimal ASCII DXF.
+        Layout mirrors the report view: axes with ticks, all series, legend.
+        """
         try:
             import math
             import re
@@ -397,120 +433,275 @@ class RaiseOfSlopesPlugin:
 
             def _rgb_to_aci(r, g, b):
                 palette = [
-                    (1, (255, 0, 0)),
-                    (2, (255, 255, 0)),
-                    (3, (0, 255, 0)),
-                    (4, (0, 255, 255)),
-                    (5, (0, 0, 255)),
-                    (6, (255, 0, 255)),
+                    (1, (255, 0, 0)), (2, (255, 255, 0)), (3, (0, 255, 0)),
+                    (4, (0, 255, 255)), (5, (0, 0, 255)), (6, (255, 0, 255)),
                     (7, (255, 255, 255)),
                 ]
-                best = 7
-                best_d = None
+                best, best_d = 7, None
                 for aci, (pr, pg, pb) in palette:
                     d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
                     if best_d is None or d < best_d:
-                        best_d = d
-                        best = aci
+                        best_d, best = d, aci
                 return best
 
-            points = [(float(d), float(z)) for d, z in zip(self.profile_distances, self.profile_elevations) if _finite(d) and _finite(z)]
-            if not points:
-                raise ValueError('No valid points to export DXF')
+            def _nice_ticks(lo, hi, max_ticks=6):
+                span = hi - lo
+                if span <= 0 or max_ticks < 2:
+                    return [lo, hi]
+                rough = span / (max_ticks - 1)
+                exp = math.floor(math.log10(rough))
+                frac = rough / (10 ** exp)
+                step = 1.0 if frac <= 1.0 else (2.0 if frac <= 2.0 else (5.0 if frac <= 5.0 else 10.0))
+                step *= 10 ** exp
+                v = math.ceil(lo / step) * step
+                ticks = []
+                while v <= hi + 1e-9:
+                    ticks.append(round(v, max(0, int(-exp) + 1)))
+                    v += step
+                return ticks if ticks else [lo, hi]
 
-            min_x, max_x = float(min(p[0] for p in points)), float(max(p[0] for p in points))
-            min_y, max_y = float(min(p[1] for p in points)), float(max(p[1] for p in points))
+            # --- Profile points ---
+            dist_f, elev_f = [], []
+            for d, z in zip(self.profile_distances, self.profile_elevations):
+                if _finite(d) and _finite(z):
+                    dist_f.append(float(d))
+                    elev_f.append(float(z))
+            if not dist_f:
+                raise ValueError('No valid points to export DXF')
+            profile_pts = list(zip(dist_f, elev_f))
+
+            # --- Second layer and water table points ---
+            layer2_pts, water_pts = [], []
+            try:
+                if hasattr(self.dlg, 'enable_layer2_checkbox') and self.dlg.enable_layer2_checkbox.isChecked():
+                    params = self.dlg._get_stratigraphy_params()
+                    l2_y = self.compute_layer2_profile_for_display(params)
+                    if l2_y is not None:
+                        layer2_pts = [(float(x), float(y)) for x, y in zip(dist_f, l2_y) if _finite(x) and _finite(y)]
+            except Exception:
+                pass
+            try:
+                if hasattr(self.dlg, 'enable_water_checkbox') and self.dlg.enable_water_checkbox.isChecked():
+                    params = self.dlg._get_stratigraphy_params()
+                    w_y = self.compute_water_profile_for_display(params)
+                    if w_y is not None:
+                        water_pts = [(float(x), float(y)) for x, y in zip(dist_f, w_y) if _finite(x) and _finite(y)]
+            except Exception:
+                pass
+
+            # --- Slip surfaces ---
+            surfaces = []
+            for idx, s in enumerate(self.slip_surfaces, start=1):
+                xs, ys = s.get('x'), s.get('y')
+                if xs is None or ys is None:
+                    continue
+                pts = [(float(x), float(y)) for x, y in zip(xs, ys) if _finite(x) and _finite(y)]
+                if len(pts) < 2:
+                    continue
+                color_hex = None
+                try:
+                    color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
+                except Exception:
+                    pass
+                fs = s.get('fs')
+                search = s.get('search') or ''
+                method = s.get('method') or ''
+                if isinstance(fs, (int, float)) and _finite(fs):
+                    label = f"{idx}. {search}/{method}  FS={float(fs):.3f}"
+                else:
+                    label = f"{idx}. {search}/{method}"
+                surfaces.append({'pts': pts, 'color': color_hex, 'label': label, 'idx': idx})
+
+            # --- Extents over all series ---
+            all_pts = profile_pts + layer2_pts + water_pts + [p for s in surfaces for p in s['pts']]
+            min_x = float(min(p[0] for p in all_pts))
+            max_x = float(max(p[0] for p in all_pts))
+            min_y = float(min(p[1] for p in all_pts))
+            max_y = float(max(p[1] for p in all_pts))
             x_span = max(max_x - min_x, 1.0)
             y_span = max(max_y - min_y, 1.0)
 
-            legend_x0 = min_x + 0.02 * x_span
-            legend_y0 = max_y + 0.06 * y_span
-            legend_dy = 0.04 * y_span
-            legend_line_len = 0.06 * x_span
-            legend_text_h = 0.02 * y_span
+            # --- Layout constants ---
+            text_h = 0.025 * y_span
+            tick_len = 0.015 * y_span
+            margin_bottom = 0.14 * y_span   # space below data for X axis labels + title
+            margin_left = 0.16 * x_span     # space left of data for Y axis labels + title
+            x_ticks = _nice_ticks(min_x, max_x, 6)
+            y_ticks = _nice_ticks(min_y, max_y, 5)
+            lt_scale = max(x_span, y_span) / 60.0   # linetype dash scale relative to data
+
+            # Legend above data area
+            legend_x0 = min_x
+            legend_y0 = max_y + 0.07 * y_span
+            legend_dy = 0.045 * y_span
+            legend_line_len = 0.055 * x_span
+
+            # Legend items: profile first, then layer2/water if present, then surfaces
+            legend_items = [('Ground profile', '#000000', 'CONTINUOUS', 7)]
+            if layer2_pts:
+                legend_items.append(('Layer 2 interface', '#000000', 'DASHED', 7))
+            if water_pts:
+                legend_items.append(('Water table', '#17becf', 'DASHDOT', 4))
+            for s in surfaces:
+                r, g, b = _hex_to_rgb(s['color'])
+                legend_items.append((s['label'], s['color'], 'CONTINUOUS', _rgb_to_aci(r, g, b)))
+
+            # Soil parameters table data (collected once, used by both paths)
+            soil_headers = ['Layer', 'γ [kN/m³]', "c' [kPa]", "φ' [°]", 'n [-]']
+            soil_rows = []
+            try:
+                soil_rows = self.dlg._export_stratigraphy_rows()
+            except Exception:
+                pass
+            soil_dy = legend_dy * 0.9
+            col_ws = [0.12, 0.10, 0.10, 0.09, 0.08]
+            col_xs = [legend_x0 + sum(col_ws[:i]) * x_span for i in range(len(col_ws))]
+            soil_y0 = legend_y0 - len(legend_items) * legend_dy - legend_dy
 
             try:
                 import ezdxf
                 from ezdxf import colors as ezcolors
                 import ezdxf.enums
+
                 doc = ezdxf.new(dxfversion='R2010')
                 msp = doc.modelspace()
-                # Add profile as LWPOLYLINE
-                msp.add_lwpolyline(points, dxfattribs={'layer': 'PROFILE'})
-                if 'LEGEND' not in doc.layers:
-                    doc.layers.new('LEGEND')
 
-                # Legend title
+                # Register linetypes
+                if 'DASHED' not in doc.linetypes:
+                    doc.linetypes.add('DASHED', pattern='A,.5,-.25', description='Dashed')
+                if 'DASHDOT' not in doc.linetypes:
+                    doc.linetypes.add('DASHDOT', pattern='A,.5,-.25,0,-.25', description='Dash dot')
+
+                def _elayer(name, aci=7, lt='Continuous'):
+                    if name not in doc.layers:
+                        doc.layers.new(name, dxfattribs={'color': aci, 'linetype': lt})
+
+                _elayer('PROFILE', 7)
+                _elayer('LAYER2', 7, 'DASHED')
+                _elayer('WATER', 4, 'DASHDOT')
+                _elayer('AXES', 7)
+                _elayer('LEGEND', 7)
+                if soil_rows:
+                    _elayer('PARAMS', 7)
+                for s in surfaces:
+                    _elayer(f"SURFACE_{s['idx']}", 1)
+
+                # Profile
+                msp.add_lwpolyline(profile_pts, dxfattribs={'layer': 'PROFILE'})
+
+                # Layer 2 interface
+                if layer2_pts:
+                    r, g, b = _hex_to_rgb('#000000')
+                    msp.add_lwpolyline(layer2_pts, dxfattribs={
+                        'layer': 'LAYER2', 'true_color': ezcolors.rgb2int(r, g, b),
+                        'linetype': 'DASHED', 'ltscale': lt_scale,
+                    })
+
+                # Water table
+                if water_pts:
+                    r, g, b = _hex_to_rgb('#17becf')
+                    msp.add_lwpolyline(water_pts, dxfattribs={
+                        'layer': 'WATER', 'true_color': ezcolors.rgb2int(r, g, b),
+                        'linetype': 'DASHDOT', 'ltscale': lt_scale,
+                    })
+
+                # Slip surfaces
+                for s in surfaces:
+                    r, g, b = _hex_to_rgb(s['color'])
+                    msp.add_lwpolyline(s['pts'], dxfattribs={
+                        'layer': f"SURFACE_{s['idx']}",
+                        'true_color': ezcolors.rgb2int(r, g, b),
+                    })
+
+                # --- Axes ---
+                # Bottom and left border lines
+                msp.add_line((min_x, min_y), (max_x, min_y), dxfattribs={'layer': 'AXES'})
+                msp.add_line((min_x, min_y), (min_x, max_y), dxfattribs={'layer': 'AXES'})
+                # X ticks and labels
+                for xv in x_ticks:
+                    msp.add_line((xv, min_y), (xv, min_y - tick_len), dxfattribs={'layer': 'AXES'})
+                    msp.add_text(
+                        f"{xv:g}", dxfattribs={'layer': 'AXES', 'height': text_h}
+                    ).set_placement(
+                        (xv, min_y - tick_len - text_h * 0.3),
+                        align=ezdxf.enums.TextEntityAlignment.TOP_CENTER,
+                    )
+                # Y ticks and labels
+                for yv in y_ticks:
+                    msp.add_line((min_x, yv), (min_x - tick_len, yv), dxfattribs={'layer': 'AXES'})
+                    msp.add_text(
+                        f"{yv:g}", dxfattribs={'layer': 'AXES', 'height': text_h}
+                    ).set_placement(
+                        (min_x - tick_len - text_h * 0.3, yv),
+                        align=ezdxf.enums.TextEntityAlignment.MIDDLE_RIGHT,
+                    )
+                # Axis titles
                 msp.add_text(
-                    'Slip surfaces legend',
-                    dxfattribs={'layer': 'LEGEND', 'height': legend_text_h}
-                ).set_placement((legend_x0, legend_y0), align=ezdxf.enums.TextEntityAlignment.LEFT)
+                    'Distance [m]', dxfattribs={'layer': 'AXES', 'height': text_h * 1.2}
+                ).set_placement(
+                    ((min_x + max_x) / 2, min_y - margin_bottom),
+                    align=ezdxf.enums.TextEntityAlignment.TOP_CENTER,
+                )
+                msp.add_text(
+                    'Elevation [m]',
+                    dxfattribs={'layer': 'AXES', 'height': text_h * 1.2, 'rotation': 90},
+                ).set_placement(
+                    (min_x - margin_left, (min_y + max_y) / 2),
+                    align=ezdxf.enums.TextEntityAlignment.BOTTOM_CENTER,
+                )
 
-                # Add surfaces (if present)
-                legend_row = 1
-                for idx, s in enumerate(self.slip_surfaces, start=1):
-                    pts = []
-                    xs = s.get('x')
-                    ys = s.get('y')
-                    if xs is None or ys is None:
-                        continue
-                    for x, y in zip(xs, ys):
-                        if _finite(x) and _finite(y):
-                            pts.append((float(x), float(y)))
-                    if pts:
-                        lname = f'SURFACE_{idx}'
-                        if lname not in doc.layers:
-                            doc.layers.new(lname)
+                # --- Legend ---
+                for i, item in enumerate(legend_items):
+                    lbl, color_hex = item[0], item[1]
+                    r, g, b = _hex_to_rgb(color_hex)
+                    tc = ezcolors.rgb2int(r, g, b)
+                    ly = legend_y0 - i * legend_dy
+                    msp.add_line(
+                        (legend_x0, ly), (legend_x0 + legend_line_len, ly),
+                        dxfattribs={'layer': 'LEGEND', 'true_color': tc},
+                    )
+                    msp.add_text(
+                        lbl, dxfattribs={'layer': 'LEGEND', 'height': text_h, 'true_color': tc}
+                    ).set_placement(
+                        (legend_x0 + legend_line_len + 0.01 * x_span, ly - 0.3 * text_h),
+                        align=ezdxf.enums.TextEntityAlignment.LEFT,
+                    )
 
-                        color_hex = None
-                        try:
-                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
-                        except Exception:
-                            color_hex = None
-                        r, g, b = _hex_to_rgb(color_hex)
-                        true_color = ezcolors.rgb2int(r, g, b)
-
-                        msp.add_lwpolyline(pts, dxfattribs={'layer': lname, 'true_color': true_color})
-
-                        # Legend row (segment + text)
-                        y = legend_y0 - (legend_row * legend_dy)
-                        fs = s.get('fs')
-                        search = s.get('search') or ''
-                        method = s.get('method') or ''
-                        if isinstance(fs, (int, float)) and _finite(fs):
-                            label = f"{idx}. {search}/{method}  FS={float(fs):.3f}"
-                        else:
-                            label = f"{idx}. {search}/{method}"
-
-                        msp.add_line(
-                            (legend_x0, y),
-                            (legend_x0 + legend_line_len, y),
-                            dxfattribs={'layer': 'LEGEND', 'true_color': true_color}
-                        )
+                # --- Soil parameters table ---
+                if soil_rows:
+                    total_col_w = sum(col_ws) * x_span
+                    msp.add_text(
+                        'Soil parameters',
+                        dxfattribs={'layer': 'PARAMS', 'height': text_h},
+                    ).set_placement((legend_x0, soil_y0), align=ezdxf.enums.TextEntityAlignment.LEFT)
+                    for j, hdr in enumerate(soil_headers):
                         msp.add_text(
-                            label,
-                            dxfattribs={'layer': 'LEGEND', 'height': legend_text_h, 'true_color': true_color}
-                        ).set_placement(
-                            (legend_x0 + legend_line_len + 0.01 * x_span, y - 0.5 * legend_text_h),
-                            align=ezdxf.enums.TextEntityAlignment.LEFT
-                        )
-                        legend_row += 1
+                            hdr, dxfattribs={'layer': 'PARAMS', 'height': text_h * 0.85},
+                        ).set_placement((col_xs[j], soil_y0 - soil_dy), align=ezdxf.enums.TextEntityAlignment.LEFT)
+                    sep_y = soil_y0 - soil_dy - text_h * 0.25
+                    msp.add_line((legend_x0, sep_y), (legend_x0 + total_col_w, sep_y), dxfattribs={'layer': 'PARAMS'})
+                    for ri, row in enumerate(soil_rows):
+                        for j, val in enumerate(row):
+                            msp.add_text(
+                                str(val), dxfattribs={'layer': 'PARAMS', 'height': text_h * 0.85},
+                            ).set_placement((col_xs[j], soil_y0 - (ri + 2) * soil_dy), align=ezdxf.enums.TextEntityAlignment.LEFT)
+
                 doc.saveas(path)
                 self.dlg.setStatus(f"DXF saved: {path}")
                 return
+
             except Exception:
-                # If ezdxf is not available, write a minimal ASCII DXF
-                def _write_lwpolyline(f, layer, pts, closed=True, aci=None):
+                # Minimal ASCII DXF fallback (no ezdxf dependency)
+                def _wlwp(f, layer, pts, aci=None, ltype='CONTINUOUS'):
                     f.write('  0\nLWPOLYLINE\n')
-                    f.write(f'  8\n{layer}\n')
+                    f.write(f'  8\n{layer}\n  6\n{ltype}\n')
                     if aci is not None:
                         f.write(f' 62\n{int(aci)}\n')
-                    f.write(f' 90\n{len(pts)}\n')
-                    f.write(f' 70\n{1 if closed else 0}\n')
+                    f.write(f' 90\n{len(pts)}\n 70\n0\n')
                     for x, y in pts:
                         f.write(f' 10\n{x}\n 20\n{y}\n')
 
-                def _write_line(f, layer, x1, y1, x2, y2, aci=None):
+                def _wline(f, layer, x1, y1, x2, y2, aci=None):
                     f.write('  0\nLINE\n')
                     f.write(f'  8\n{layer}\n')
                     if aci is not None:
@@ -518,79 +709,97 @@ class RaiseOfSlopesPlugin:
                     f.write(f' 10\n{x1}\n 20\n{y1}\n 30\n0.0\n')
                     f.write(f' 11\n{x2}\n 21\n{y2}\n 31\n0.0\n')
 
-                def _write_text(f, layer, x, y, text, height, aci=None):
+                def _wtxt(f, layer, x, y, text, h, aci=None, rotation=0):
                     f.write('  0\nTEXT\n')
                     f.write(f'  8\n{layer}\n')
                     if aci is not None:
                         f.write(f' 62\n{int(aci)}\n')
                     f.write(f' 10\n{x}\n 20\n{y}\n 30\n0.0\n')
-                    f.write(f' 40\n{height}\n')
+                    f.write(f' 40\n{h}\n')
+                    if rotation:
+                        f.write(f' 50\n{rotation}\n')
                     f.write(f'  1\n{text}\n')
 
                 with open(path, 'w', encoding='utf-8') as f:
                     # HEADER
                     f.write('  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n')
 
-                    # TABLES (layers)
+                    # TABLES: linetypes + layers
                     f.write('  0\nSECTION\n  2\nTABLES\n')
+                    # Linetype table
+                    f.write('  0\nTABLE\n  2\nLTYPE\n')
+                    f.write('  0\nLTYPE\n  2\nCONTINUOUS\n 70\n0\n  3\nSolid\n 72\n65\n 73\n0\n 40\n0.0\n')
+                    f.write('  0\nLTYPE\n  2\nDASHED\n 70\n0\n  3\nDashed\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 74\n0\n 49\n-0.25\n 74\n0\n')
+                    f.write('  0\nLTYPE\n  2\nDASHDOT\n 70\n0\n  3\nDash dot\n 72\n65\n 73\n4\n 40\n1.0\n 49\n0.5\n 74\n0\n 49\n-0.25\n 74\n0\n 49\n0.0\n 74\n0\n 49\n-0.25\n 74\n0\n')
+                    f.write('  0\nENDTAB\n')
+                    # Layer table
                     f.write('  0\nTABLE\n  2\nLAYER\n')
                     f.write('  0\nLAYER\n  2\nPROFILE\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
+                    f.write('  0\nLAYER\n  2\nLAYER2\n 70\n0\n 62\n7\n  6\nDASHED\n')
+                    f.write('  0\nLAYER\n  2\nWATER\n 70\n0\n 62\n4\n  6\nDASHDOT\n')
+                    f.write('  0\nLAYER\n  2\nAXES\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
                     f.write('  0\nLAYER\n  2\nLEGEND\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
-                    for idx, s in enumerate(self.slip_surfaces, start=1):
-                        color_hex = None
-                        try:
-                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
-                        except Exception:
-                            color_hex = None
-                        r, g, b = _hex_to_rgb(color_hex)
+                    if soil_rows:
+                        f.write('  0\nLAYER\n  2\nPARAMS\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
+                    for s in surfaces:
+                        r, g, b = _hex_to_rgb(s['color'])
                         aci = _rgb_to_aci(r, g, b)
-                        f.write(f'  0\nLAYER\n  2\nSURFACE_{idx}\n 70\n0\n 62\n{aci}\n  6\nCONTINUOUS\n')
-                    f.write('  0\nENDTAB\n  0\nENDSEC\n')
+                        f.write(f'  0\nLAYER\n  2\nSURFACE_{s["idx"]}\n 70\n0\n 62\n{aci}\n  6\nCONTINUOUS\n')
+                    f.write('  0\nENDTAB\n')
+                    f.write('  0\nENDSEC\n')
 
                     # ENTITIES
                     f.write('  0\nSECTION\n  2\nENTITIES\n')
 
                     # Profile
-                    _write_lwpolyline(f, 'PROFILE', points, closed=True, aci=7)
+                    _wlwp(f, 'PROFILE', profile_pts, aci=7)
 
-                    # Legend title
-                    _write_text(f, 'LEGEND', legend_x0, legend_y0, 'Slip surfaces legend', legend_text_h, aci=7)
+                    # Layer 2 interface
+                    if layer2_pts:
+                        _wlwp(f, 'LAYER2', layer2_pts, aci=7, ltype='DASHED')
 
-                    # Surfaces + legend rows
-                    legend_row = 1
-                    for idx, s in enumerate(self.slip_surfaces, start=1):
-                        xs = s.get('x')
-                        ys = s.get('y')
-                        if xs is None or ys is None:
-                            continue
-                        pts = [(float(x), float(y)) for x, y in zip(xs, ys) if _finite(x) and _finite(y)]
-                        if len(pts) < 2:
-                            continue
+                    # Water table
+                    if water_pts:
+                        _wlwp(f, 'WATER', water_pts, aci=4, ltype='DASHDOT')
 
-                        color_hex = None
-                        try:
-                            color_hex = s.get('color') or self._get_color_for_surface(idx - 1, s.get('search'), s.get('method'))
-                        except Exception:
-                            color_hex = None
-                        r, g, b = _hex_to_rgb(color_hex)
-                        aci = _rgb_to_aci(r, g, b)
+                    # Slip surfaces
+                    for s in surfaces:
+                        r, g, b = _hex_to_rgb(s['color'])
+                        _wlwp(f, f"SURFACE_{s['idx']}", s['pts'], aci=_rgb_to_aci(r, g, b))
 
-                        _write_lwpolyline(f, f'SURFACE_{idx}', pts, closed=True, aci=aci)
+                    # --- Axes ---
+                    _wline(f, 'AXES', min_x, min_y, max_x, min_y, aci=7)
+                    _wline(f, 'AXES', min_x, min_y, min_x, max_y, aci=7)
+                    for xv in x_ticks:
+                        _wline(f, 'AXES', xv, min_y, xv, min_y - tick_len, aci=7)
+                        _wtxt(f, 'AXES', xv, min_y - tick_len - text_h * 0.3, f"{xv:g}", text_h, aci=7)
+                    for yv in y_ticks:
+                        _wline(f, 'AXES', min_x, yv, min_x - tick_len, yv, aci=7)
+                        _wtxt(f, 'AXES', min_x - tick_len - text_h * 0.3, yv, f"{yv:g}", text_h, aci=7)
+                    _wtxt(f, 'AXES', (min_x + max_x) / 2, min_y - margin_bottom, 'Distance [m]', text_h * 1.2, aci=7)
+                    _wtxt(f, 'AXES', min_x - margin_left, (min_y + max_y) / 2, 'Elevation [m]', text_h * 1.2, aci=7, rotation=90)
 
-                        y = legend_y0 - (legend_row * legend_dy)
-                        _write_line(f, 'LEGEND', legend_x0, y, legend_x0 + legend_line_len, y, aci=aci)
-                        fs = s.get('fs')
-                        search = s.get('search') or ''
-                        method = s.get('method') or ''
-                        if isinstance(fs, (int, float)) and _finite(fs):
-                            label = f"{idx}. {search}/{method}  FS={float(fs):.3f}"
-                        else:
-                            label = f"{idx}. {search}/{method}"
-                        _write_text(f, 'LEGEND', legend_x0 + legend_line_len + 0.01 * x_span, y - 0.5 * legend_text_h, label, legend_text_h, aci=aci)
-                        legend_row += 1
+                    # --- Legend ---
+                    for i, item in enumerate(legend_items):
+                        lbl, aci = item[0], item[3]
+                        ly = legend_y0 - i * legend_dy
+                        _wline(f, 'LEGEND', legend_x0, ly, legend_x0 + legend_line_len, ly, aci=aci)
+                        _wtxt(f, 'LEGEND', legend_x0 + legend_line_len + 0.01 * x_span, ly - 0.3 * text_h, lbl, text_h, aci=aci)
+
+                    # --- Soil parameters table ---
+                    if soil_rows:
+                        total_col_w = sum(col_ws) * x_span
+                        _wtxt(f, 'PARAMS', legend_x0, soil_y0, 'Soil parameters', text_h, aci=7)
+                        for j, hdr in enumerate(soil_headers):
+                            _wtxt(f, 'PARAMS', col_xs[j], soil_y0 - soil_dy, hdr, text_h * 0.85, aci=7)
+                        sep_y = soil_y0 - soil_dy - text_h * 0.25
+                        _wline(f, 'PARAMS', legend_x0, sep_y, legend_x0 + total_col_w, sep_y, aci=7)
+                        for ri, row in enumerate(soil_rows):
+                            for j, val in enumerate(row):
+                                _wtxt(f, 'PARAMS', col_xs[j], soil_y0 - (ri + 2) * soil_dy, str(val), text_h * 0.85, aci=7)
 
                     f.write('  0\nENDSEC\n  0\nEOF\n')
-                self.dlg.setStatus(f"Minimal DXF saved: {path}")
+                self.dlg.setStatus(f"DXF saved: {path}")
         except Exception as e:
             import traceback
             self.dlg.setStatus(f"Error exporting DXF: {e}")
