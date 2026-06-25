@@ -20,4 +20,4 @@ deprecated=False
 tags=limit equilibrium,slope,stability,landslide,section,geotechnics,Bishop,Morgenstern-Price,Spencer,DEM,profile,analysis   
 homepage=https://github.com/pitta1981/RaiseOfSlope
 repository=https://github.com/pitta1981/RaiseOfSlope
-issues=https://github.com/pitta1981/RaiseOfSlope/issues
+tracker=https://github.com/pitta1981/RaiseOfSlope/issues
