@@ -3,7 +3,7 @@ name=Raise of Slopes
 qgisMinimumVersion=3.28
 qgisMaximumVersion=3.99
 description=DEM profile analysis and slope stability with limit equilibrium methods (Bishop, Morgenstern-Price, Spencer)
-version=0.9.2
+version=1.0.0
 author=S.Pittaluga, L.M. Lalicata, A. Bressan, L. Tamellini, D. Gallipoli
 email=simone.pittaluga@cnr.it
 about=
@@ -15,12 +15,13 @@ about=
  -- Acknowledgements: funded by the European Union NextGenerationEU and MUR (NRRP, Mission 4, Component 2, Investment 1.5) project RAISE - Robotics and AI for Socio-economic Empowerment (ECS00000035).
 category=Raster
 icon=icon.svg
-experimental=True
+experimental=False
 deprecated=False
 tags=limit equilibrium,slope,stability,landslide,section,geotechnics,Bishop,Morgenstern-Price,Spencer,DEM,profile,analysis   
 homepage=https://github.com/pitta1981/RaiseOfSlope
 repository=https://github.com/pitta1981/RaiseOfSlope
 tracker=https://github.com/pitta1981/RaiseOfSlope/issues
 changelog=
+ 1.0.0 (2026-07-02) Initial release.
  0.9.2 (2026-06-29) Fixed issue with slope direction.
  0.9.1 (2026-06-25) Removed deprecated code with wrong permissions.
