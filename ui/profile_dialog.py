@@ -9,7 +9,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                                  QSizePolicy, QScrollArea,
                                  QTableWidget, QTableWidgetItem, QHeaderView)
 from qgis.PyQt.QtSvg import QSvgGenerator
-from qgis.core import (QgsProject, QgsMapLayerProxyModel,
+from qgis.core import (Qgis, QgsProject,
                        QgsCoordinateReferenceSystem, QgsRectangle)
 from qgis.gui import QgsExtentGroupBox, QgsMapLayerComboBox, QgsFileWidget
 
@@ -121,13 +121,13 @@ class ProfileCanvas(QWidget):
             svg.setViewBox(QRectF(0, 0, width, total_h).toRect())
             svg.setTitle('Raise of Slopes - Profile Export')
             painter = QPainter(svg)
-            painter.fillRect(QRectF(0, 0, width, total_h), Qt.white)
+            painter.fillRect(QRectF(0, 0, width, total_h), Qt.GlobalColor.white)
             self._paint_content(painter, QRectF(0, 0, width, total_h), include_table=include_table, table_rows=table_rows or [])
             painter.end()
             return
 
-        image = QImage(width, total_h, QImage.Format_ARGB32)
-        image.fill(Qt.white)
+        image = QImage(width, total_h, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.white)
         painter = QPainter(image)
         self._paint_content(painter, QRectF(0, 0, width, total_h), include_table=include_table, table_rows=table_rows or [])
         painter.end()
@@ -136,7 +136,7 @@ class ProfileCanvas(QWidget):
     def paintEvent(self, event):
         _ = event
         painter = QPainter(self)
-        painter.fillRect(self.rect(), Qt.white)
+        painter.fillRect(self.rect(), Qt.GlobalColor.white)
         self._paint_content(painter, QRectF(self.rect()), include_table=False, table_rows=[])
         painter.end()
 
@@ -176,14 +176,14 @@ class ProfileCanvas(QWidget):
         if plot_rect.width() < 10 or plot_rect.height() < 10:
             return
 
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(QPen(QColor('#999999'), 1.0))
         painter.drawRect(plot_rect)
 
         all_points = [p for s in self._series for p in s.get('points', [])]
         if not all_points:
             painter.setPen(QPen(QColor('#555555'), 1.0))
-            painter.drawText(plot_rect, Qt.AlignCenter, self._empty_message)
+            painter.drawText(plot_rect, Qt.AlignmentFlag.AlignCenter, self._empty_message)
             return
 
         x_vals = [p[0] for p in all_points]
@@ -210,7 +210,7 @@ class ProfileCanvas(QWidget):
         x_ticks = _nice_ticks(x_min, x_max, 6)
         y_ticks = _nice_ticks(y_min, y_max, 5)
         grid_pen = QPen(QColor('#d7d7d7'), 0.8)
-        grid_pen.setStyle(Qt.DashLine)
+        grid_pen.setStyle(Qt.PenStyle.DashLine)
         painter.setPen(grid_pen)
         for xv in x_ticks:
             if x_min <= xv <= x_max:
@@ -228,7 +228,7 @@ class ProfileCanvas(QWidget):
                 continue
             poly = QPolygonF([map_pt(px, py) for px, py in points])
             pen = QPen(QColor(s.get('color', '#000000')), float(s.get('width', 2.0)))
-            pen.setStyle(s.get('style', Qt.SolidLine))
+            pen.setStyle(s.get('style', Qt.PenStyle.SolidLine))
             painter.setPen(pen)
             painter.drawPolyline(poly)
 
@@ -243,7 +243,7 @@ class ProfileCanvas(QWidget):
                 painter.drawLine(QPointF(gx, plot_rect.bottom()), QPointF(gx, plot_rect.bottom() + tick_len))
                 painter.drawText(
                     QRectF(gx - 28.0, plot_rect.bottom() + tick_len + 1.0, 56.0, x_tick_h),
-                    Qt.AlignCenter, _format_tick(xv),
+                    Qt.AlignmentFlag.AlignCenter, _format_tick(xv),
                 )
 
         for yv in y_ticks:
@@ -252,7 +252,7 @@ class ProfileCanvas(QWidget):
                 painter.drawLine(QPointF(plot_rect.left() - tick_len, gy), QPointF(plot_rect.left(), gy))
                 painter.drawText(
                     QRectF(rect.left() + 2.0, gy - 7.0, left - tick_len - 5.0, 14.0),
-                    Qt.AlignRight | Qt.AlignVCenter, _format_tick(yv),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, _format_tick(yv),
                 )
 
         # Axis labels
@@ -261,14 +261,14 @@ class ProfileCanvas(QWidget):
         x_lbl_y = plot_rect.bottom() + tick_len + x_tick_h + 2.0
         painter.drawText(
             QRectF(plot_rect.left(), x_lbl_y, plot_rect.width(), x_ax_h),
-            Qt.AlignCenter, self._x_label,
+            Qt.AlignmentFlag.AlignCenter, self._x_label,
         )
         painter.save()
         painter.translate(rect.left() + 14.0, plot_rect.center().y())
         painter.rotate(-90)
         painter.drawText(
             QRectF(-plot_rect.height() / 2.0, -10.0, plot_rect.height(), 20.0),
-            Qt.AlignCenter, self._y_label,
+            Qt.AlignmentFlag.AlignCenter, self._y_label,
         )
         painter.restore()
 
@@ -293,13 +293,13 @@ class ProfileCanvas(QWidget):
                     QColor(item.get('color', '#000000')),
                     float(item.get('width', 2.0)),
                 )
-                swatch_pen.setStyle(item.get('style', Qt.SolidLine))
+                swatch_pen.setStyle(item.get('style', Qt.PenStyle.SolidLine))
                 painter.setPen(swatch_pen)
                 painter.drawLine(QPointF(lx + 4.0, ly + item_h / 2.0), QPointF(lx + 26.0, ly + item_h / 2.0))
                 painter.setPen(QPen(QColor('#222222'), 1.0))
                 painter.drawText(
                     QRectF(lx + 30.0, ly, col_w - 34.0, item_h),
-                    Qt.AlignLeft | Qt.AlignVCenter,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                     str(item.get('label', '')),
                 )
 
@@ -333,9 +333,9 @@ class ProfileCanvas(QWidget):
 
         painter.setPen(QPen(QColor('#222222'), 1.0))
         painter.setFont(QFont('Sans Serif', 8))
-        painter.drawText(QRectF(bx, by - 15.0, bar_w, 12.0), Qt.AlignHCenter, 'Factor of Safety')
-        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignLeft, f"{fs_min:.2f}")
-        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignRight, f"{fs_max:.2f}")
+        painter.drawText(QRectF(bx, by - 15.0, bar_w, 12.0), Qt.AlignmentFlag.AlignHCenter, 'Factor of Safety')
+        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignmentFlag.AlignLeft, f"{fs_min:.2f}")
+        painter.drawText(QRectF(bx, by + bar_h + 1.0, bar_w, 12.0), Qt.AlignmentFlag.AlignRight, f"{fs_max:.2f}")
 
     def _draw_table(self, painter, rect, rows):
         headers = ['Layer', 'γ (kN/m³)', 'c (kPa)', 'φ (°)', 'n']
@@ -344,7 +344,7 @@ class ProfileCanvas(QWidget):
 
         if not rows:
             painter.setPen(QPen(QColor('#444444'), 1.0))
-            painter.drawText(rect, Qt.AlignCenter, 'No stratigraphy or water table defined.')
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, 'No stratigraphy or water table defined.')
             return
 
         n_cols = len(headers)
@@ -364,12 +364,12 @@ class ProfileCanvas(QWidget):
         painter.setFont(QFont('Sans Serif', 8))
         for i, h in enumerate(headers):
             cell = QRectF(rect.left() + i * col_w + 4.0, rect.top(), col_w - 8.0, row_h)
-            painter.drawText(cell, Qt.AlignLeft | Qt.AlignVCenter, h)
+            painter.drawText(cell, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, h)
 
         for r, row in enumerate(rows, start=1):
             for c, val in enumerate(row):
                 cell = QRectF(rect.left() + c * col_w + 4.0, rect.top() + r * row_h, col_w - 8.0, row_h)
-                painter.drawText(cell, Qt.AlignLeft | Qt.AlignVCenter, str(val))
+                painter.drawText(cell, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(val))
 
 
 class ProfileDialog(QDialog):
@@ -497,8 +497,8 @@ class ProfileDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidget(widget)
         scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         return scroll
 
     def _build_ui(self):
@@ -536,15 +536,15 @@ class ProfileDialog(QDialog):
         fos_layout = QHBoxLayout(fos_group)
         self.btnRunAnalysis = QToolButton()
         self.btnRunAnalysis.setText("Run Simplex Analysis")
-        self.btnRunAnalysis.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.btnRunAnalysis.setPopupMode(QToolButton.MenuButtonPopup)
+        self.btnRunAnalysis.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.btnRunAnalysis.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.btnRunAnalysis.clicked.connect(self._emit_simplex_stability_analysis)
         run_menu = QMenu(self)
         act_grid = QAction("Run Grid Analysis", self)
         act_grid.triggered.connect(self._emit_grid_stability_analysis)
         run_menu.addAction(act_grid)
         self.btnRunAnalysis.setMenu(run_menu)
-        self.btnRunAnalysis.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.btnRunAnalysis.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         fos_layout.addWidget(self.btnRunAnalysis)
         layout.addWidget(fos_group)
 
@@ -626,7 +626,7 @@ class ProfileDialog(QDialog):
         self.act_include_legend = act_include_legend
 
         self.btnExport.setMenu(export_menu)
-        self.btnExport.setPopupMode(QToolButton.InstantPopup)
+        self.btnExport.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         hl_actions.addWidget(self.btnExport)
 
         # Project menu (save / load) also grouped to save space
@@ -640,7 +640,7 @@ class ProfileDialog(QDialog):
         act_load.triggered.connect(self._do_load_project)
         proj_menu.addAction(act_load)
         self.btnProject.setMenu(proj_menu)
-        self.btnProject.setPopupMode(QToolButton.InstantPopup)
+        self.btnProject.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         hl_actions.addWidget(self.btnProject)
 
         layout.addLayout(hl_actions)
@@ -890,8 +890,10 @@ class ProfileDialog(QDialog):
     
     def _on_layer2_enabled_changed(self, state):
         """Gestisce l'abilitazione/disabilitazione dei parametri del secondo strato."""
-        self.layer2_params_widget.setEnabled(state == Qt.Checked)
-        if state == Qt.Checked:
+        # Read the checkbox directly: with PyQt6 `state` is an int and never equals Qt.CheckState.Checked
+        enabled = self.enable_layer2_checkbox.isChecked()
+        self.layer2_params_widget.setEnabled(enabled)
+        if enabled:
             self._reload_layer2_rasters()
         # Aggiorna il grafico
         self._refresh_profile_display()
@@ -907,8 +909,10 @@ class ProfileDialog(QDialog):
     
     def _on_water_enabled_changed(self, state):
         """Gestisce l'abilitazione/disabilitazione dei parametri della falda."""
-        self.water_params_widget.setEnabled(state == Qt.Checked)
-        if state == Qt.Checked:
+        # Read the checkbox directly: with PyQt6 `state` is an int and never equals Qt.CheckState.Checked
+        enabled = self.enable_water_checkbox.isChecked()
+        self.water_params_widget.setEnabled(enabled)
+        if enabled:
             self._reload_water_rasters()
         # Aggiorna il grafico
         self._refresh_profile_display()
@@ -1184,11 +1188,11 @@ class ProfileDialog(QDialog):
 
         path_form = QFormLayout()
         self.hazard_fos_file = QgsFileWidget()
-        self.hazard_fos_file.setStorageMode(QgsFileWidget.SaveFile)
+        self.hazard_fos_file.setStorageMode(QgsFileWidget.StorageMode.SaveFile)
         self.hazard_fos_file.setFilter("GeoTIFF (*.tif *.tiff)")
         path_form.addRow("FoS raster:", self.hazard_fos_file)
         self.hazard_depth_file = QgsFileWidget()
-        self.hazard_depth_file.setStorageMode(QgsFileWidget.SaveFile)
+        self.hazard_depth_file.setStorageMode(QgsFileWidget.StorageMode.SaveFile)
         self.hazard_depth_file.setFilter("GeoTIFF (*.tif *.tiff)")
         path_form.addRow("Depth raster:", self.hazard_depth_file)
         new_layout.addLayout(path_form)
@@ -1199,10 +1203,10 @@ class ProfileDialog(QDialog):
         self.hazard_existing_widget = QGroupBox("Existing rasters")
         existing_layout = QFormLayout(self.hazard_existing_widget)
         self.hazard_fos_layer_combo = QgsMapLayerComboBox()
-        self.hazard_fos_layer_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.hazard_fos_layer_combo.setFilters(Qgis.LayerFilter.RasterLayer)
         existing_layout.addRow("FoS raster:", self.hazard_fos_layer_combo)
         self.hazard_depth_layer_combo = QgsMapLayerComboBox()
-        self.hazard_depth_layer_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        self.hazard_depth_layer_combo.setFilters(Qgis.LayerFilter.RasterLayer)
         existing_layout.addRow("Depth raster:", self.hazard_depth_layer_combo)
         self.hazard_overwrite_checkbox = QCheckBox("Overwrite (clear) instead of update")
         existing_layout.addRow(self.hazard_overwrite_checkbox)
@@ -1540,7 +1544,7 @@ class ProfileDialog(QDialog):
                 'label': 'Ground profile',
                 'color': '#000000',
                 'width': 2.0,
-                'style': Qt.SolidLine,
+                'style': Qt.PenStyle.SolidLine,
                 'points': list(zip(dist_f, elev_f)),
             })
 
@@ -1554,7 +1558,7 @@ class ProfileDialog(QDialog):
                         'label': 'Layer 2 interface',
                         'color': '#1f77b4',
                         'width': 1.5,
-                        'style': Qt.DashLine,
+                        'style': Qt.PenStyle.DashLine,
                         'points': points,
                     })
 
@@ -1568,7 +1572,7 @@ class ProfileDialog(QDialog):
                         'label': 'Water table',
                         'color': '#17becf',
                         'width': 1.5,
-                        'style': Qt.DashDotLine,
+                        'style': Qt.PenStyle.DashDotLine,
                         'points': points,
                     })
 
@@ -1578,7 +1582,7 @@ class ProfileDialog(QDialog):
         if slip_surfaces_list is not None and len(slip_surfaces_list) > 0:
             # Filtra solo le superfici visibili
             visible_indices = [i for i in range(self.surface_visibility_list.count())
-                               if self.surface_visibility_list.item(i).checkState() == 2]
+                               if self.surface_visibility_list.item(i).checkState() == Qt.CheckState.Checked]
             visible_surfaces = [slip_surfaces_list[i] for i in visible_indices if i < len(slip_surfaces_list)]
 
             # With several surfaces, convey the Factor-of-Safety scale through the
@@ -1615,7 +1619,7 @@ class ProfileDialog(QDialog):
                     'label': label,
                     'color': surface.get('color', '#d62728'),
                     'width': width,
-                    'style': Qt.SolidLine,
+                    'style': Qt.PenStyle.SolidLine,
                     'points': points,
                 })
 
@@ -1628,7 +1632,7 @@ class ProfileDialog(QDialog):
                     'label': 'Critical slip surface',
                     'color': '#d62728',
                     'width': 2.0,
-                    'style': Qt.SolidLine,
+                    'style': Qt.PenStyle.SolidLine,
                     'points': points,
                 })
 
@@ -1669,8 +1673,8 @@ class ProfileDialog(QDialog):
         for s in surfaces_list:
             label = s.get('label', 'Surface')
             item = QListWidgetItem(label)
-            item.setFlags(item.flags() | 2)  # ItemIsUserCheckable
-            item.setCheckState(2)  # Checked
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
             self.surface_visibility_list.addItem(item)
         self.surface_visibility_list.blockSignals(False)
 
@@ -1865,7 +1869,7 @@ class ProfileDialog(QDialog):
         results_text = '\n\n'.join(results_parts)
 
         dlg = ReportDialog(series, colorbar, strat_rows, results_text, parent=self)
-        dlg.exec_()
+        dlg.exec()
 
 
 class ReportDialog(QDialog):
@@ -1896,11 +1900,11 @@ class ReportDialog(QDialog):
         title_font = QFont('Sans Serif', 12)
         title_font.setBold(True)
         title.setFont(title_font)
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         date_lbl = QLabel(f'Generated: {date.today().isoformat()}')
-        date_lbl.setAlignment(Qt.AlignCenter)
+        date_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(date_lbl)
 
         # ── Profile canvas ───────────────────────────────────────────────────
@@ -1921,8 +1925,8 @@ class ReportDialog(QDialog):
             tbl = QTableWidget(len(self._strat_rows), len(headers))
             tbl.setHorizontalHeaderLabels(headers)
             tbl.setMaximumHeight(110)
-            tbl.setEditTriggers(QTableWidget.NoEditTriggers)
-            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             tbl.verticalHeader().setVisible(False)
             for r, row in enumerate(self._strat_rows):
                 for c, val in enumerate(row):

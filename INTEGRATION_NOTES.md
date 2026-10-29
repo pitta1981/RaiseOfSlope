@@ -72,7 +72,7 @@ Il plugin mantiene:
 
 ## Requisiti
 
-- QGIS 3.x
+- QGIS 3.34+ (Qt5) oppure QGIS 4.x (Qt6)
 - NumPy, SciPy, Matplotlib
 - submodule `external/gwf-le` presente e aggiornato
 

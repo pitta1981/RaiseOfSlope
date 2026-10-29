@@ -21,7 +21,7 @@ from qgis.core import (
     QgsCoordinateTransform,
     QgsProject,
     QgsGeometry,
-    QgsWkbTypes,
+    Qgis,
 )
 from qgis.gui import QgsRubberBand
 
@@ -189,7 +189,7 @@ class RaiseOfSlopesPlugin:
         """Handle the first point selection."""
         self._clear_rubber_bands()
         
-        self.p1_rubber_band = QgsRubberBand(self.iface.mapCanvas(), QgsWkbTypes.PointGeometry)
+        self.p1_rubber_band = QgsRubberBand(self.iface.mapCanvas(), Qgis.GeometryType.Point)
         self.p1_rubber_band.setColor(QColor(255, 0, 0))
         self.p1_rubber_band.setIconSize(15)
         self.p1_rubber_band.addPoint(p1)
@@ -198,12 +198,12 @@ class RaiseOfSlopesPlugin:
 
     def _create_placeholder(self, p1, p2):
         """Create a visual placeholder on the map."""
-        self.p2_rubber_band = QgsRubberBand(self.iface.mapCanvas(), QgsWkbTypes.PointGeometry)
+        self.p2_rubber_band = QgsRubberBand(self.iface.mapCanvas(), Qgis.GeometryType.Point)
         self.p2_rubber_band.setColor(QColor(0, 255, 0))
         self.p2_rubber_band.setIconSize(12)
         self.p2_rubber_band.addPoint(p2)
         
-        self.line_rubber_band = QgsRubberBand(self.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
+        self.line_rubber_band = QgsRubberBand(self.iface.mapCanvas(), Qgis.GeometryType.Line)
         self.line_rubber_band.setColor(QColor(0, 0, 255))
         self.line_rubber_band.setWidth(2)
         self.line_rubber_band.addPoint(p1)
@@ -593,7 +593,7 @@ class RaiseOfSlopesPlugin:
                 if layer2_pts:
                     r, g, b = _hex_to_rgb('#000000')
                     msp.add_lwpolyline(layer2_pts, dxfattribs={
-                        'layer': 'LAYER2', 'true_color': ezcolors.rgb2int(r, g, b),
+                        'layer': 'LAYER2', 'true_color': ezcolors.rgb2int((r, g, b)),
                         'linetype': 'DASHED', 'ltscale': lt_scale,
                     })
 
@@ -601,7 +601,7 @@ class RaiseOfSlopesPlugin:
                 if water_pts:
                     r, g, b = _hex_to_rgb('#17becf')
                     msp.add_lwpolyline(water_pts, dxfattribs={
-                        'layer': 'WATER', 'true_color': ezcolors.rgb2int(r, g, b),
+                        'layer': 'WATER', 'true_color': ezcolors.rgb2int((r, g, b)),
                         'linetype': 'DASHDOT', 'ltscale': lt_scale,
                     })
 
@@ -610,7 +610,7 @@ class RaiseOfSlopesPlugin:
                     r, g, b = _hex_to_rgb(s['color'])
                     msp.add_lwpolyline(s['pts'], dxfattribs={
                         'layer': f"SURFACE_{s['idx']}",
-                        'true_color': ezcolors.rgb2int(r, g, b),
+                        'true_color': ezcolors.rgb2int((r, g, b)),
                     })
 
                 # --- Axes ---
@@ -654,7 +654,7 @@ class RaiseOfSlopesPlugin:
                 for i, item in enumerate(legend_items):
                     lbl, color_hex = item[0], item[1]
                     r, g, b = _hex_to_rgb(color_hex)
-                    tc = ezcolors.rgb2int(r, g, b)
+                    tc = ezcolors.rgb2int((r, g, b))
                     ly = legend_y0 - i * legend_dy
                     msp.add_line(
                         (legend_x0, ly), (legend_x0 + legend_line_len, ly),
@@ -691,60 +691,79 @@ class RaiseOfSlopesPlugin:
                 return
 
             except Exception:
-                # Minimal ASCII DXF fallback (no ezdxf dependency)
+                # Minimal DXF fallback (no ezdxf dependency).
+                # Written as DXF R12 (AC1009): the simplest layout every CAD reader accepts,
+                # so it uses POLYLINE/VERTEX (LWPOLYLINE only exists from R13 on).
+                def _dxf_text(txt):
+                    """cp1252-safe text; other characters become \\U+XXXX escapes (as ezdxf does)."""
+                    out = []
+                    for ch in str(txt):
+                        try:
+                            ch.encode('cp1252')
+                            out.append(ch)
+                        except UnicodeEncodeError:
+                            out.append('\\U+%04X' % ord(ch))
+                    return ''.join(out).replace('\r', ' ').replace('\n', ' ')
+
                 def _wlwp(f, layer, pts, aci=None, ltype='CONTINUOUS'):
-                    f.write('  0\nLWPOLYLINE\n')
+                    f.write('  0\nPOLYLINE\n')
                     f.write(f'  8\n{layer}\n  6\n{ltype}\n')
                     if aci is not None:
                         f.write(f' 62\n{int(aci)}\n')
-                    f.write(f' 90\n{len(pts)}\n 70\n0\n')
+                    f.write(' 66\n1\n 10\n0.0\n 20\n0.0\n 30\n0.0\n 70\n0\n')
                     for x, y in pts:
-                        f.write(f' 10\n{x}\n 20\n{y}\n')
+                        f.write(f'  0\nVERTEX\n  8\n{layer}\n 10\n{float(x)}\n 20\n{float(y)}\n 30\n0.0\n')
+                    f.write(f'  0\nSEQEND\n  8\n{layer}\n')
 
                 def _wline(f, layer, x1, y1, x2, y2, aci=None):
                     f.write('  0\nLINE\n')
                     f.write(f'  8\n{layer}\n')
                     if aci is not None:
                         f.write(f' 62\n{int(aci)}\n')
-                    f.write(f' 10\n{x1}\n 20\n{y1}\n 30\n0.0\n')
-                    f.write(f' 11\n{x2}\n 21\n{y2}\n 31\n0.0\n')
+                    f.write(f' 10\n{float(x1)}\n 20\n{float(y1)}\n 30\n0.0\n')
+                    f.write(f' 11\n{float(x2)}\n 21\n{float(y2)}\n 31\n0.0\n')
 
                 def _wtxt(f, layer, x, y, text, h, aci=None, rotation=0):
                     f.write('  0\nTEXT\n')
                     f.write(f'  8\n{layer}\n')
                     if aci is not None:
                         f.write(f' 62\n{int(aci)}\n')
-                    f.write(f' 10\n{x}\n 20\n{y}\n 30\n0.0\n')
-                    f.write(f' 40\n{h}\n')
+                    f.write(f' 10\n{float(x)}\n 20\n{float(y)}\n 30\n0.0\n')
+                    f.write(f' 40\n{float(h)}\n')
                     if rotation:
                         f.write(f' 50\n{rotation}\n')
-                    f.write(f'  1\n{text}\n')
+                    f.write(f'  1\n{_dxf_text(text)}\n')
 
-                with open(path, 'w', encoding='utf-8') as f:
+                with open(path, 'w', encoding='cp1252', newline='\n') as f:
                     # HEADER
-                    f.write('  0\nSECTION\n  2\nHEADER\n  0\nENDSEC\n')
+                    f.write('  0\nSECTION\n  2\nHEADER\n')
+                    f.write('  9\n$ACADVER\n  1\nAC1009\n')
+                    f.write('  9\n$DWGCODEPAGE\n  3\nANSI_1252\n')
+                    f.write(f'  9\n$LTSCALE\n 40\n{float(lt_scale)}\n')
+                    f.write('  0\nENDSEC\n')
 
-                    # TABLES: linetypes + layers
+                    # TABLES: linetypes, layers, text style
                     f.write('  0\nSECTION\n  2\nTABLES\n')
-                    # Linetype table
-                    f.write('  0\nTABLE\n  2\nLTYPE\n')
-                    f.write('  0\nLTYPE\n  2\nCONTINUOUS\n 70\n0\n  3\nSolid\n 72\n65\n 73\n0\n 40\n0.0\n')
-                    f.write('  0\nLTYPE\n  2\nDASHED\n 70\n0\n  3\nDashed\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 74\n0\n 49\n-0.25\n 74\n0\n')
-                    f.write('  0\nLTYPE\n  2\nDASHDOT\n 70\n0\n  3\nDash dot\n 72\n65\n 73\n4\n 40\n1.0\n 49\n0.5\n 74\n0\n 49\n-0.25\n 74\n0\n 49\n0.0\n 74\n0\n 49\n-0.25\n 74\n0\n')
+                    f.write('  0\nTABLE\n  2\nLTYPE\n 70\n3\n')
+                    f.write('  0\nLTYPE\n  2\nCONTINUOUS\n 70\n0\n  3\nSolid line\n 72\n65\n 73\n0\n 40\n0.0\n')
+                    f.write('  0\nLTYPE\n  2\nDASHED\n 70\n0\n  3\nDashed\n 72\n65\n 73\n2\n 40\n0.75\n 49\n0.5\n 49\n-0.25\n')
+                    f.write('  0\nLTYPE\n  2\nDASHDOT\n 70\n0\n  3\nDash dot\n 72\n65\n 73\n4\n 40\n1.0\n 49\n0.5\n 49\n-0.25\n 49\n0.0\n 49\n-0.25\n')
                     f.write('  0\nENDTAB\n')
-                    # Layer table
-                    f.write('  0\nTABLE\n  2\nLAYER\n')
-                    f.write('  0\nLAYER\n  2\nPROFILE\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
-                    f.write('  0\nLAYER\n  2\nLAYER2\n 70\n0\n 62\n7\n  6\nDASHED\n')
-                    f.write('  0\nLAYER\n  2\nWATER\n 70\n0\n 62\n4\n  6\nDASHDOT\n')
-                    f.write('  0\nLAYER\n  2\nAXES\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
-                    f.write('  0\nLAYER\n  2\nLEGEND\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
+
+                    layer_defs = [('0', 7, 'CONTINUOUS'), ('PROFILE', 7, 'CONTINUOUS'), ('LAYER2', 7, 'DASHED'),
+                                  ('WATER', 4, 'DASHDOT'), ('AXES', 7, 'CONTINUOUS'), ('LEGEND', 7, 'CONTINUOUS')]
                     if soil_rows:
-                        f.write('  0\nLAYER\n  2\nPARAMS\n 70\n0\n 62\n7\n  6\nCONTINUOUS\n')
+                        layer_defs.append(('PARAMS', 7, 'CONTINUOUS'))
                     for s in surfaces:
                         r, g, b = _hex_to_rgb(s['color'])
-                        aci = _rgb_to_aci(r, g, b)
-                        f.write(f'  0\nLAYER\n  2\nSURFACE_{s["idx"]}\n 70\n0\n 62\n{aci}\n  6\nCONTINUOUS\n')
+                        layer_defs.append((f"SURFACE_{s['idx']}", _rgb_to_aci(r, g, b), 'CONTINUOUS'))
+                    f.write(f'  0\nTABLE\n  2\nLAYER\n 70\n{len(layer_defs)}\n')
+                    for name, aci, lt in layer_defs:
+                        f.write(f'  0\nLAYER\n  2\n{name}\n 70\n0\n 62\n{int(aci)}\n  6\n{lt}\n')
+                    f.write('  0\nENDTAB\n')
+
+                    f.write('  0\nTABLE\n  2\nSTYLE\n 70\n1\n')
+                    f.write('  0\nSTYLE\n  2\nSTANDARD\n 70\n0\n 40\n0.0\n 41\n1.0\n 50\n0.0\n 71\n0\n 42\n0.2\n  3\ntxt\n  4\n\n')
                     f.write('  0\nENDTAB\n')
                     f.write('  0\nENDSEC\n')
 
@@ -921,8 +940,11 @@ class RaiseOfSlopesPlugin:
         stored = []
         for s in self.slip_surfaces:
             try:
-                xs_raw = s.get('x') or []
-                ys_raw = s.get('y') or []
+                # x/y are numpy arrays: `arr or []` raises "truth value is ambiguous"
+                xs_raw = s.get('x')
+                ys_raw = s.get('y')
+                xs_raw = [] if xs_raw is None else xs_raw
+                ys_raw = [] if ys_raw is None else ys_raw
                 xs = []
                 ys = []
                 for xi, yi in zip(xs_raw, ys_raw):
@@ -949,7 +971,7 @@ class RaiseOfSlopesPlugin:
             if hasattr(self.dlg, 'surface_visibility_list') and self.dlg.surface_visibility_list is not None:
                 for i in range(self.dlg.surface_visibility_list.count()):
                     try:
-                        if self.dlg.surface_visibility_list.item(i).checkState() == 2:
+                        if self.dlg.surface_visibility_list.item(i).checkState() == Qt.CheckState.Checked:
                             visible_indices.append(i)
                     except Exception:
                         continue
@@ -1110,10 +1132,10 @@ class RaiseOfSlopesPlugin:
                         self.dlg,
                         "Missing layers",
                         msg,
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.Yes,
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes,
                     )
-                    if choice != QMessageBox.Yes:
+                    if choice != QMessageBox.StandardButton.Yes:
                         self.dlg.setStatus("Project load cancelled by user.")
                         return
                 except Exception as e:
@@ -1254,7 +1276,7 @@ class RaiseOfSlopesPlugin:
                     lw.blockSignals(True)
                     for i in range(lw.count()):
                         try:
-                            lw.item(i).setCheckState(2 if i in vis else 0)
+                            lw.item(i).setCheckState(Qt.CheckState.Checked if i in vis else Qt.CheckState.Unchecked)
                         except Exception:
                             continue
                     lw.blockSignals(False)
@@ -1479,7 +1501,7 @@ class RaiseOfSlopesPlugin:
         if fs_max <= fs_min:
             fs_max = fs_min + 1.0
         ramp = QgsColorRampShader(fs_min, fs_max)
-        ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        ramp.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
         items = []
         for k in range(5):
             t = k / 4.0
@@ -1500,7 +1522,7 @@ class RaiseOfSlopesPlugin:
         if depth_max <= depth_min:
             depth_max = depth_min + 1.0
         ramp = QgsColorRampShader(depth_min, depth_max)
-        ramp.setColorRampType(QgsColorRampShader.Interpolated)
+        ramp.setColorRampType(Qgis.ShaderInterpolationMethod.Linear)
         # White (0 m / surface) → dark blue (maximum depth)
         stops = [
             (255, 255, 255),
@@ -2870,7 +2892,7 @@ Optimization:
 
             # Plan line
             try:
-                rb = QgsRubberBand(self.iface.mapCanvas(), QgsWkbTypes.LineGeometry)
+                rb = QgsRubberBand(self.iface.mapCanvas(), Qgis.GeometryType.Line)
                 rb.setColor(QColor(color))
                 rb.setWidth(3)
                 rb.addPoint(pin)

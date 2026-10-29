@@ -8,12 +8,14 @@ This script can either:
 The plugin folder name is determined from metadata.txt ("RaiseOfSlopes").
 
 Usage:
-    python install_plugin.py [--dest DEST] [--zip]
+    python install_plugin.py [--dest DEST] [--qgis {3,4}] [--zip]
 
 Options:
     --dest DEST   explicit path to QGIS plugins folder. If omitted, the
                   script will try to determine a reasonable default based on
                   the platform and the default QGIS profile.
+    --qgis {3,4}  QGIS major version used to pick the default profile folder
+                  (QGIS3 or QGIS4). Defaults to 3.
     --zip         create a zip archive instead of copying the folder.
 """
 
@@ -67,48 +69,25 @@ def _is_excluded_file(rel_file: str, filename: str) -> bool:
     return any(rel == prefix or rel.startswith(prefix + "/") for prefix in EXCLUDED_DIR_PREFIXES)
 
 
-def default_qgis_plugin_dir() -> str:
-    """Return a sensible default plugins directory for the current OS."""
+def default_qgis_plugin_dir(qgis_major: int = 3) -> str:
+    """Return a sensible default plugins directory for the current OS.
+
+    QGIS 3 and QGIS 4 keep their profiles in separate folders
+    (``QGIS3`` / ``QGIS4``), so the target QGIS major version must be known.
+    """
     home = os.path.expanduser("~")
     system = platform.system()
     if system == "Darwin":
-        return os.path.join(
-            home,
-            "Library",
-            "Application Support",
-            "QGIS",
-            "QGIS3",
-            "profiles",
-            "default",
-            "python",
-            "plugins",
-        )
+        base = os.path.join(home, "Library", "Application Support", "QGIS")
     elif system == "Linux":
-        return os.path.join(
-            home,
-            ".local",
-            "share",
-            "QGIS",
-            "QGIS3",
-            "profiles",
-            "default",
-            "python",
-            "plugins",
-        )
+        base = os.path.join(home, ".local", "share", "QGIS")
     elif system == "Windows":
-        return os.path.join(
-            home,
-            "AppData",
-            "Roaming",
-            "QGIS",
-            "QGIS3",
-            "profiles",
-            "default",
-            "python",
-            "plugins",
-        )
+        base = os.path.join(home, "AppData", "Roaming", "QGIS")
     else:
         raise RuntimeError(f"Unsupported platform: {system}")
+    return os.path.join(
+        base, f"QGIS{qgis_major}", "profiles", "default", "python", "plugins"
+    )
 
 
 def copy_plugin(dest_dir: str) -> None:
@@ -179,6 +158,13 @@ def main():
         help="Explicit QGIS plugins directory. Overrides platform guess.",
     )
     parser.add_argument(
+        "--qgis",
+        type=int,
+        choices=(3, 4),
+        default=3,
+        help="Target QGIS major version for the default plugins directory (default: 3).",
+    )
+    parser.add_argument(
         "--zip",
         action="store_true",
         help="Create a zip archive instead of copying the folder.",
@@ -191,7 +177,7 @@ def main():
         zip_plugin(fname)
         return
 
-    dest_dir = args.dest or default_qgis_plugin_dir()
+    dest_dir = args.dest or default_qgis_plugin_dir(args.qgis)
     if not os.path.isdir(dest_dir):
         print(f"Destination directory does not exist: {dest_dir}")
         print("Please create it or specify --dest explicitly.")
